@@ -26,6 +26,7 @@ except ImportError:
     PYSPARK_AVAILABLE = False
 
 if PYSPARK_AVAILABLE:
+    from scm_platform import transform_silver as ts
     from scm_platform.ingest_bronze import DATASET_SCHEMAS
     from scm_platform.transform_silver import (
         transform_fact_inventory_snapshot,
@@ -125,7 +126,7 @@ class TestMasterDataToSilver(unittest.TestCase):
         for feed, fn_name in DIM_TRANSFORMS.items():
             bronze = cls.spark.createDataFrame(cls.feeds[feed], schema=DATASET_SCHEMAS[feed]()) \
                 .withColumn("_ingest_timestamp", lit(datetime(2026, 10, 13, 2, 0)))
-            dim_df, quar_df = globals()[fn_name](bronze, batch_id="b_test")
+            dim_df, quar_df = getattr(ts, fn_name)(bronze, batch_id="b_test")
             dim_dfs[feed] = dim_df.cache()
             cls.results[feed] = (dim_df.collect(), quar_df.collect())
         cls.dim_dfs = dim_dfs
