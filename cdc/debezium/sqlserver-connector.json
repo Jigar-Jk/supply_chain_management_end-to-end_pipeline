@@ -1,0 +1,27 @@
+{
+  "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+  "tasks.max": "1",
+
+  "database.hostname": "host.docker.internal",
+  "database.port": "1433",
+  "database.user": "debezium_cdc",
+  "database.password": "${env:DEBEZIUM_SQL_PASSWORD}",
+  "database.names": "scm_oms",
+  "database.encrypt": "true",
+  "database.trustServerCertificate": "true",
+
+  "table.include.list": "dbo.order_lines,dbo.inventory",
+  "topic.prefix": "scm",
+  "snapshot.mode": "initial",
+  "tombstones.on.delete": "true",
+  "include.schema.changes": "false",
+  "decimal.handling.mode": "double",
+
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false",
+
+  "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+  "schema.history.internal.kafka.topic": "scm.schema-history"
+}

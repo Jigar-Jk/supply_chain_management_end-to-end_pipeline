@@ -1,0 +1,25 @@
+## Liquibase Configuration for Azure Databricks (Unity Catalog)
+## Copy this file to liquibase.properties and populate your Databricks connection details.
+## DO NOT COMMIT liquibase.properties with real credentials, tokens, or live URLs.
+
+# JDBC Driver for Databricks (com.databricks.client.jdbc.Driver)
+# Download the driver from Databricks and place it in the liquibase classpath or lib/ folder.
+driver=com.databricks.client.jdbc.Driver
+
+# JDBC URL format for Databricks SQL Warehouse or All-Purpose Cluster:
+# jdbc:databricks://<workspace-host>:443/default;transportMode=http;ssl=1;AuthMech=3;httpPath=<http-path>;ConnCatalog=scm_platform_dev;ConnSchema=ops
+url=jdbc:databricks://<workspace-host>.azuredatabricks.net:443/default;transportMode=http;ssl=1;AuthMech=3;httpPath=/sql/1.0/warehouses/<warehouse-id>;ConnCatalog=scm_platform_dev;ConnSchema=ops
+
+# Authentication: Use Personal Access Token (PAT) or Azure AD token
+username=token
+password=<your-databricks-pat-or-aad-token>
+
+# Path to the master changelog
+changeLogFile=changelog/db.changelog-master.xml
+
+# Default catalog and schema for Liquibase internal tracking tables (DATABASECHANGELOG, DATABASECHANGELOGLOCK)
+# The 'ops' schema is managed by Terraform in Unity Catalog specifically for operational and audit metadata.
+defaultCatalogName=scm_platform_dev
+defaultSchemaName=ops
+liquibaseCatalogName=scm_platform_dev
+liquibaseSchemaName=ops

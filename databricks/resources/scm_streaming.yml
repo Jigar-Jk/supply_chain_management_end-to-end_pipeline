@@ -1,0 +1,70 @@
+# GPS/RFID events and SQL Server CDC (Debezium) from Event Hubs into Bronze.
+# Every 30 minutes each stream drains what is waiting (--available-now) and stops, so no cluster runs 24/7.
+# The two tasks have no depends_on: they run in parallel on the same cluster, each with its own checkpoint.
+# The Event Hubs connection string comes from a secret scope, never from this file.
+resources:
+  volumes:
+    checkpoints:
+      catalog_name: ${var.catalog}
+      schema_name: ops
+      name: checkpoints
+      volume_type: MANAGED
+      comment: "Structured Streaming checkpoints (committed Kafka offsets) for the GPS and CDC streams"
+
+  jobs:
+    scm_streaming:
+      name: "[${bundle.target}] scm_streaming"
+      description: "Drains GPS and CDC topics into Bronze; resumes from the checkpointed offsets."
+      max_concurrent_runs: 1
+
+      schedule:
+        quartz_cron_expression: "0 */30 * * * ?"
+        timezone_id: UTC
+
+      email_notifications:
+        on_failure:
+          - ${var.alert_email}
+
+      job_clusters:
+        - job_cluster_key: stream_compute
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 0
+            spark_conf:
+              "spark.databricks.cluster.profile": "singleNode"
+              "spark.master": "local[*]"
+            spark_env_vars:
+              EVENTHUB_CONNECTION_STRING: "{{secrets/scm-platform/eventhub-connection-string}}"
+            custom_tags:
+              "ResourceClass": "SingleNode"
+              "Project": "scm-logistics-platform"
+
+      tasks:
+        - task_key: stream_gps
+          job_cluster_key: stream_compute
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          python_wheel_task:
+            package_name: scm_platform
+            entry_point: scm-stream-gps
+            parameters: ["--bootstrap", "${var.kafka_bootstrap}", "--catalog", "${var.catalog}",
+                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/gps", "--available-now"]
+          libraries:
+            - whl: ../../dist/*.whl
+
+        - task_key: stream_cdc
+          job_cluster_key: stream_compute
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          python_wheel_task:
+            package_name: scm_platform
+            entry_point: scm-stream-cdc
+            parameters: ["--bootstrap", "${var.kafka_bootstrap}", "--catalog", "${var.catalog}",
+                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/cdc", "--available-now"]
+          libraries:
+            - whl: ../../dist/*.whl
+
+      tags:
+        project: "scm-logistics-platform"
+        managed_by: "databricks-asset-bundles"

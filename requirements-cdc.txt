@@ -1,0 +1,2 @@
+# CDC source loader / change simulator (SQL Server OMS)
+pyodbc>=5,<6

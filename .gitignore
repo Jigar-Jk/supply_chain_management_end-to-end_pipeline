@@ -1,0 +1,54 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Data directories - ignore generated files but keep .gitkeep
+data/route_cache/*
+!data/route_cache/.gitkeep
+data/weather_cache/*
+!data/weather_cache/.gitkeep
+data/routes/*
+!data/routes/.gitkeep
+data/weather/*
+!data/weather/.gitkeep
+data/shipments/*
+!data/shipments/.gitkeep
+data/warehouses/*
+!data/warehouses/.gitkeep
+data/products/*
+!data/products/.gitkeep
+data/customers/*
+!data/customers/.gitkeep
+data/carriers/*
+!data/carriers/.gitkeep
+data/_manifests/*
+!data/_manifests/.gitkeep
+data/orders/*
+!data/orders/.gitkeep
+data/inventory/*
+!data/inventory/.gitkeep
+data/_local_lake/
+data/gps/
+
+# Python packaging output
+build/
+dist/
+*.egg-info/
+
+# Databricks bundle state and workspace-specific files
+.databricks/
+databricks/cred.json
+
+
+# Local environments and secrets
+.env
+.venv*/
+liquibase/liquibase.properties
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Logs (Java crash logs from local Spark, PowerShell transcripts, ...)
+*.log

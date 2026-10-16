@@ -1,0 +1,183 @@
+# Local streaming stack: Kafka (stand-in for Azure Event Hubs) + Spark Structured Streaming.
+#
+# Event Hubs speaks the Kafka protocol, so the producer and the streaming job run unchanged
+# against Event Hubs later; only the bootstrap address and the connection string differ.
+#
+# Sized for a ~8 GB laptop: Kafka is capped at 768 MB, Spark at 1.6 GB.
+#
+#   docker compose -f local/streaming/docker-compose.yml up -d kafka kafka-init     # broker + topic
+#   python -m data_generators.produce_gps --events 20000 --eps 1000                   # from the host
+#   docker compose -f local/streaming/docker-compose.yml run --rm gps-stream          # drain into Bronze, stop
+#   docker compose -f local/streaming/docker-compose.yml run --rm gps-stream-inspect  # row counts
+#   docker compose -f local/streaming/docker-compose.yml down                         # stop everything
+#
+# Delta tables and checkpoints land in data/_local_lake/ (gitignored).
+
+x-spark: &spark
+  image: apache/spark:${SPARK_VERSION:-4.0.1}-python3
+  user: root                     # local dev only: lets Spark write the bind-mounted lake + ivy cache
+  mem_limit: 1600m
+  depends_on:
+    kafka-init:
+      condition: service_completed_successfully
+  volumes:
+    - ../..:/opt/project:ro
+    - ../../data/_local_lake:/lake
+    - ivy-cache:/tmp/ivy
+  environment:
+    PYTHONPATH: /opt/project
+    SPARK_PACKAGES: >-
+      org.apache.spark:spark-sql-kafka-0-10_2.13:${SPARK_VERSION:-4.0.1},io.delta:delta-spark_2.13:${DELTA_VERSION:-4.0.0}
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: scm-kafka
+    ports:
+      - "9092:9092"
+    mem_limit: 768m
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: HOST://:9092,DOCKER://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,DOCKER:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: 168          # 7 days, like the Event Hubs retention in infra/eventhub.tf
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists
+        --topic gps-events --partitions 4 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic gps-events
+
+  # Kafka Connect with the Debezium connectors: reads SQL Server CDC change tables and publishes
+  # every insert/update/delete to Kafka (topics scm.scm_oms.dbo.<table>). Register the connector with
+  #   Invoke-RestMethod -Method Put -Uri http://localhost:8083/connectors/scm-oms-sqlserver/config `
+  #     -ContentType application/json -InFile cdc/debezium/sqlserver-connector.json
+  # Its LSN bookmark (offsets), configs and statuses live in Kafka topics, so a restart resumes where it stopped.
+  kafka-connect:
+    image: quay.io/debezium/connect:3.0.0.Final
+    container_name: scm-kafka-connect
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8083:8083"                  # Kafka Connect REST API
+    mem_limit: 900m
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: scm-connect
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets          # Debezium's LSN bookmark
+      STATUS_STORAGE_TOPIC: connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      HEAP_OPTS: "-Xms256m -Xmx512m"
+      # Lets connector configs reference ${env:NAME}, so the password never appears in a file
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      DEBEZIUM_SQL_PASSWORD: ${DEBEZIUM_SQL_PASSWORD:?Set DEBEZIUM_SQL_PASSWORD (debezium_cdc login password)}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/ >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+
+  # Drain the topic into Bronze (availableNow) and stop. Remove --available-now to run continuously.
+  gps-stream:
+    <<: *spark
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /opt/spark/bin/spark-submit --master local[2] --driver-memory 1g
+        --conf spark.jars.ivy=/tmp/ivy --packages "$$SPARK_PACKAGES"
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.sql.session.timeZone=UTC
+        --conf spark.sql.shuffle.partitions=4
+        /opt/project/scm_platform/stream_gps_events.py
+        --bootstrap kafka:29092 --lake-path /lake --available-now
+
+  # Drain the Debezium CDC topics into bronze.orders_cdc / bronze.inventory_cdc and stop.
+  cdc-stream:
+    <<: *spark
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /opt/spark/bin/spark-submit --master local[2] --driver-memory 1g
+        --conf spark.jars.ivy=/tmp/ivy --packages "$$SPARK_PACKAGES"
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.sql.session.timeZone=UTC
+        --conf spark.sql.shuffle.partitions=4
+        /opt/project/scm_platform/stream_cdc_events.py
+        --bootstrap kafka:29092 --lake-path /lake --available-now
+
+  # Print CDC Bronze row counts by table and op, plus samples.
+  cdc-stream-inspect:
+    <<: *spark
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /opt/spark/bin/spark-submit --master local[1] --driver-memory 1g
+        --conf spark.jars.ivy=/tmp/ivy --packages "$$SPARK_PACKAGES"
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.sql.session.timeZone=UTC
+        /opt/project/local/streaming/inspect_cdc.py /lake
+
+  # Compare Silver's CDC-applied order_lines with SQL Server's (export it first:
+  # python -m local.streaming.export_oms_state). Exit code 0 = identical.
+  cdc-reconcile:
+    <<: *spark
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /opt/spark/bin/spark-submit --master local[2] --driver-memory 1g
+        --conf spark.jars.ivy=/tmp/ivy --packages "$$SPARK_PACKAGES"
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.sql.session.timeZone=UTC
+        --conf spark.sql.shuffle.partitions=4
+        /opt/project/local/streaming/reconcile_cdc.py /lake
+
+  # Print Bronze / dead-letter row counts and a sample.
+  gps-stream-inspect:
+    <<: *spark
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /opt/spark/bin/spark-submit --master local[1] --driver-memory 1g
+        --conf spark.jars.ivy=/tmp/ivy --packages "$$SPARK_PACKAGES"
+        --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+        --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+        --conf spark.sql.session.timeZone=UTC
+        /opt/project/local/streaming/inspect_bronze.py /lake
+
+volumes:
+  ivy-cache:

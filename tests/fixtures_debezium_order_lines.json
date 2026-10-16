@@ -1,0 +1,22 @@
+{
+ "r": {
+  "key": "{\"order_id\":\"ORD-0000B97C3BC5\",\"order_line_number\":1}",
+  "value": "{\"before\": null, \"after\": {\"order_id\": \"ORD-0000B97C3BC5\", \"order_line_number\": 1, \"customer_id\": \"CUST-000719\", \"product_id\": \"SKU-001268\", \"warehouse_id\": \"WH-0001\", \"order_date\": 20708, \"promised_delivery_date\": 20713, \"ordered_quantity\": 5, \"shipped_quantity\": 5, \"unit_price\": 128.88, \"order_status\": \"DELIVERED\", \"updated_at\": 1789662577000}, \"source\": {\"version\": \"3.0.0.Final\", \"connector\": \"sqlserver\", \"name\": \"scm\", \"ts_ms\": 1792069365143, \"snapshot\": \"first\", \"db\": \"scm_oms\", \"sequence\": null, \"ts_us\": 1792069365143642, \"ts_ns\": 1792069365143642600, \"schema\": \"dbo\", \"table\": \"order_lines\", \"change_lsn\": null, \"commit_lsn\": \"00000033:00005f00:0003\", \"event_serial_no\": null}, \"transaction\": null, \"op\": \"r\", \"ts_ms\": 1792069365193, \"ts_us\": 1792069365193281, \"ts_ns\": 1792069365193281651}"
+ },
+ "u": {
+  "key": "{\"order_id\":\"ORD-B2F369E54F6A\",\"order_line_number\":1}",
+  "value": "{\"before\": {\"order_id\": \"ORD-B2F369E54F6A\", \"order_line_number\": 1, \"customer_id\": \"CUST-004255\", \"product_id\": \"SKU-003313\", \"warehouse_id\": \"WH-0019\", \"order_date\": 20737, \"promised_delivery_date\": 20741, \"ordered_quantity\": 24, \"shipped_quantity\": 0, \"unit_price\": 60.32, \"order_status\": \"PICKED\", \"updated_at\": 1792064318440}, \"after\": {\"order_id\": \"ORD-B2F369E54F6A\", \"order_line_number\": 1, \"customer_id\": \"CUST-004255\", \"product_id\": \"SKU-003313\", \"warehouse_id\": \"WH-0019\", \"order_date\": 20737, \"promised_delivery_date\": 20741, \"ordered_quantity\": 24, \"shipped_quantity\": 24, \"unit_price\": 60.32, \"order_status\": \"SHIPPED\", \"updated_at\": 1792069500674}, \"source\": {\"version\": \"3.0.0.Final\", \"connector\": \"sqlserver\", \"name\": \"scm\", \"ts_ms\": 1792069502337, \"snapshot\": \"false\", \"db\": \"scm_oms\", \"sequence\": null, \"ts_us\": 1792069502337000, \"ts_ns\": 1792069502337000000, \"schema\": \"dbo\", \"table\": \"order_lines\", \"change_lsn\": \"00000033:000061b8:0002\", \"commit_lsn\": \"00000033:000061d8:0003\", \"event_serial_no\": 2}, \"transaction\": null, \"op\": \"u\", \"ts_ms\": 1792069510874, \"ts_us\": 1792069510874858, \"ts_ns\": 1792069510874858784}"
+ },
+ "c": {
+  "key": "{\"order_id\":\"ORD-D7523BF0DA10\",\"order_line_number\":1}",
+  "value": "{\"before\": null, \"after\": {\"order_id\": \"ORD-D7523BF0DA10\", \"order_line_number\": 1, \"customer_id\": \"CUST-000991\", \"product_id\": \"SKU-002757\", \"warehouse_id\": \"WH-0020\", \"order_date\": 20741, \"promised_delivery_date\": 20748, \"ordered_quantity\": 2, \"shipped_quantity\": 0, \"unit_price\": 1.42, \"order_status\": \"CREATED\", \"updated_at\": 1792069553498}, \"source\": {\"version\": \"3.0.0.Final\", \"connector\": \"sqlserver\", \"name\": \"scm\", \"ts_ms\": 1792069553623, \"snapshot\": \"false\", \"db\": \"scm_oms\", \"sequence\": null, \"ts_us\": 1792069553623000, \"ts_ns\": 1792069553623000000, \"schema\": \"dbo\", \"table\": \"order_lines\", \"change_lsn\": \"00000033:00006388:0002\", \"commit_lsn\": \"00000033:00006398:0009\", \"event_serial_no\": 1}, \"transaction\": null, \"op\": \"c\", \"ts_ms\": 1792069556827, \"ts_us\": 1792069556827597, \"ts_ns\": 1792069556827597182}"
+ },
+ "d": {
+  "key": "{\"order_id\":\"ORD-5310889D7B56\",\"order_line_number\":2}",
+  "value": "{\"before\": {\"order_id\": \"ORD-5310889D7B56\", \"order_line_number\": 2, \"customer_id\": \"CUST-000078\", \"product_id\": \"SKU-002761\", \"warehouse_id\": \"WH-0003\", \"order_date\": 20737, \"promised_delivery_date\": 20744, \"ordered_quantity\": 1, \"shipped_quantity\": 0, \"unit_price\": 2506.73, \"order_status\": \"CREATED\", \"updated_at\": 1792064255787}, \"after\": null, \"source\": {\"version\": \"3.0.0.Final\", \"connector\": \"sqlserver\", \"name\": \"scm\", \"ts_ms\": 1792069588140, \"snapshot\": \"false\", \"db\": \"scm_oms\", \"sequence\": null, \"ts_us\": 1792069588140000, \"ts_ns\": 1792069588140000000, \"schema\": \"dbo\", \"table\": \"order_lines\", \"change_lsn\": \"00000033:000066c8:0001\", \"commit_lsn\": \"00000033:000066d0:0001\", \"event_serial_no\": 1}, \"transaction\": null, \"op\": \"d\", \"ts_ms\": 1792069589137, \"ts_us\": 1792069589137534, \"ts_ns\": 1792069589137534025}"
+ },
+ "tombstone": {
+  "key": "{\"order_id\":\"ORD-5310889D7B56\",\"order_line_number\":2}",
+  "value": null
+ }
+}

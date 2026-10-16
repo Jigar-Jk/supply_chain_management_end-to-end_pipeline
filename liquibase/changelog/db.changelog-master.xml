@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Master Changelog for SCM Logistics Platform (Unity Catalog)
+      Orchestrates SQL migrations across Bronze, Silver, Quarantine, and Gold schemas.
+      Infrastructure ownership:
+        - Schemas (bronze, silver, gold, quarantine, ops) are managed by Terraform.
+        - Relational tables, views, and constraints are managed by Liquibase.
+    -->
+
+    <!-- Part 1: Bronze raw ingestion tables -->
+    <include file="changes/001-create-bronze-tables.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 2: Silver cleansed tables and Quarantine repository -->
+    <include file="changes/002-create-silver-tables.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 3: Gold business aggregates and analytical views -->
+    <include file="changes/003-create-gold-objects.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 4: Silver Galaxy Schema Redesign and Charter-Compliant Quarantine -->
+    <include file="changes/004-create-silver-galaxy-tables.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 5: Bronze master-data feeds, Bronze bad-record fixes, Gold-facing dimension attributes -->
+    <include file="changes/005-bronze-master-data-and-schema-fixes.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 6: SQL Server OMS order-line feed and fact_order fill-rate / freshness columns -->
+    <include file="changes/006-orders-feed-and-fact-order-measures.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 7: WMS nightly inventory reconciliation feed and stockout flag -->
+    <include file="changes/007-wms-inventory-feed-and-stockout-flag.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 8: Order-linked shipments with delivery outcomes and OTIF columns -->
+    <include file="changes/008-order-linked-shipments-and-otif-columns.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9: Retire legacy Gold objects that read the old Silver mirror tables -->
+    <include file="changes/009-retire-legacy-gold-objects.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9b: GPS/RFID streaming tables and latest-ping columns (before Gold, which reads them) -->
+    <include file="changes/010-gps-stream-tables-and-last-ping.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9c: CDC Bronze tables (SQL Server OMS via Debezium) -->
+    <include file="changes/011-cdc-bronze-tables.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9d: CDC Silver apply (soft deletes, log-order guard, real-time stock) -->
+    <include file="changes/012-cdc-silver-apply.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9e: Quarantine reprocessing lifecycle and ops tables (SLA config, run log) -->
+    <include file="changes/013-quarantine-lifecycle-and-ops.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9f: Bronze _batch_id and last-known-good inventory snapshots -->
+    <include file="changes/014-bronze-batch-id-and-stale-snapshots.sql" relativeToChangelogFile="true"/>
+
+    <!-- Part 9g: streaming lag limits for the 30-minute schedule; oracle_cdc renamed sqlserver_cdc -->
+    <include file="changes/015-streaming-sla-and-sqlserver-cdc-name.sql" relativeToChangelogFile="true"/>
+
+    <!--
+      Part 10: Gold KPI views and reporting mart.
+      One SQL file per object, shared with the local tests (tests/test_gold_kpis.py), so what is
+      tested is exactly what is deployed. runOnChange="true": editing a file redeploys that object
+      (every file is CREATE OR REPLACE, so re-running is safe). Order matters: the mart reads the views.
+    -->
+    <changeSet id="gold-vw-otif-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/01_vw_otif_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-fill-rate-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/02_vw_fill_rate_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-stockout-rate-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/03_vw_stockout_rate_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-inventory-turnover-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/04_vw_inventory_turnover_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-delivery-delay-risk" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/05_vw_delivery_delay_risk.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-mart-logistics-kpi-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/06_mart_logistics_kpi_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+
+</databaseChangeLog>

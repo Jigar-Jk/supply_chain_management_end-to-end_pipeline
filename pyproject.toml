@@ -1,0 +1,24 @@
+# Packaging for the Databricks job code. The wheel is built and uploaded by the asset bundle
+# (databricks/databricks.yml) and each job task calls one of the entry points below.
+# PySpark and delta-spark are NOT dependencies: the Databricks runtime provides them.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scm_platform"
+version = "0.1.0"
+description = "PS-02 Logistics Visibility Control Tower - Bronze, Silver, streaming and ops jobs"
+requires-python = ">=3.10"
+
+[project.scripts]
+scm-ingest-bronze = "scm_platform.ingest_bronze:main"
+scm-transform-silver = "scm_platform.transform_silver:main"
+scm-stream-gps = "scm_platform.stream_gps_events:main"
+scm-stream-cdc = "scm_platform.stream_cdc_events:main"
+scm-reprocess-quarantine = "scm_platform.reprocess_quarantine:main"
+scm-wms-sla-check = "scm_platform.sla_checks:main"
+
+[tool.setuptools]
+packages = ["scm_platform"]

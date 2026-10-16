@@ -1,0 +1,87 @@
+# ==============================================================================
+# Databricks Asset Bundle - PS-02 Logistics Visibility Control Tower
+# ==============================================================================
+# One bundle deploys the wheel (scm_platform, built from pyproject.toml) and every job in
+# databricks/resources/. Targets dev / qa / prod differ only in catalog, folder and schedules
+# (qa doubles as UAT).
+#
+#   databricks bundle validate -t dev
+#   databricks bundle deploy   -t dev
+#   databricks bundle run      -t dev scm_daily_pipeline
+# ==============================================================================
+
+bundle:
+  name: scm-logistics-platform
+
+include:
+  - databricks/resources/*.yml
+
+# Set once the workspace exists (cloud window); every target inherits it.
+workspace:
+  host: https://adb-REPLACE-WITH-WORKSPACE-ID.azuredatabricks.net
+
+# Per-environment values; jobs refer to them as ${var.<name>}.
+variables:
+  catalog:
+    description: Unity Catalog catalog for this environment
+  storage_account:
+    description: ADLS Gen2 account holding the landing zone
+    default: stscmplatformdev
+  kafka_bootstrap:
+    description: Event Hubs Kafka endpoint used by the GPS and CDC streams
+    default: REPLACE-WITH-NAMESPACE.servicebus.windows.net:9093
+  alert_email:
+    description: Receives job failure and SLA-miss alerts
+    default: REPLACE-WITH-ALERT-EMAIL
+  spark_version:
+    description: Databricks Runtime for all job clusters
+    default: 15.4.x-scala2.12
+  node_type:
+    description: VM size for the single-node job clusters
+    default: Standard_D4ds_v5
+  warehouse_id:
+    description: Serverless SQL warehouse for the Silver quality tests and the Gold refresh
+    default: REPLACE-WITH-WAREHOUSE-ID
+
+# Built on every deploy and uploaded; job tasks attach it with `libraries: - whl: ../../dist/*.whl`.
+artifacts:
+  scm_platform_wheel:
+    type: whl
+    path: .
+    build: python -m pip wheel . --no-deps -w dist
+
+# Only the package, the job definitions and the SQL the jobs run are needed in the workspace.
+sync:
+  exclude:
+    - data/**
+    - data_generators/**
+    - local/**
+    - tests/**
+    - docs/**
+    - infra/**
+    - cdc/**
+    - liquibase/**
+    - dashboards/**
+    - build/**
+    - databricks/cred.json
+    - "*.log"
+
+targets:
+  dev:
+    mode: development          # jobs prefixed [dev <user>], schedules paused, deployed to your user folder
+    default: true
+    variables:
+      catalog: scm_platform_dev
+
+  qa:                          # QA / UAT: full pipeline on test data, sign-off on KPIs
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/qa
+    variables:
+      catalog: scm_platform_qa
+
+  prod:
+    mode: production           # schedules active; must deploy to a shared folder, not a user folder
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/prod
+    variables:
+      catalog: scm_platform_prod

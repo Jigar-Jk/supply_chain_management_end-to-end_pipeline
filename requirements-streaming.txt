@@ -1,0 +1,2 @@
+# Streaming ingestion (GPS/RFID producer -> Kafka / Azure Event Hubs)
+confluent-kafka>=2.4,<3
