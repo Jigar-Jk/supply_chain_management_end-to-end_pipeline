@@ -25,14 +25,13 @@ Run locally with:
 """
 
 import unittest
-from datetime import date, datetime
+from datetime import datetime
 
 # Guard PySpark imports for local test execution
 try:
     from pyspark.sql import SparkSession
     from pyspark.sql.types import (
         BooleanType,
-        DateType,
         DoubleType,
         IntegerType,
         StringType,
@@ -46,19 +45,13 @@ except ImportError:
 
 if PYSPARK_AVAILABLE:
     from scm_platform.transform_silver import (
-        apply_scd2_dimension,
-        deduplicate_dataframe,
         generate_dim_date,
-        lookup_dimension_sk,
         transform_dim_carrier,
         transform_dim_customer,
-        transform_dim_product,
         transform_dim_route,
-        transform_dim_warehouse,
         transform_fact_inventory_snapshot,
         transform_fact_order,
         transform_fact_shipment,
-        transform_routes,
         transform_weather,
         update_quarantine_status,
     )

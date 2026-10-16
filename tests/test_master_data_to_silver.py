@@ -28,11 +28,6 @@ except ImportError:
 if PYSPARK_AVAILABLE:
     from scm_platform.ingest_bronze import DATASET_SCHEMAS
     from scm_platform.transform_silver import (
-        transform_dim_carrier,
-        transform_dim_customer,
-        transform_dim_product,
-        transform_dim_route,
-        transform_dim_warehouse,
         transform_fact_inventory_snapshot,
         transform_fact_order,
         transform_fact_shipment,

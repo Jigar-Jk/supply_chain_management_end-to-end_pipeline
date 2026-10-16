@@ -22,3 +22,11 @@ scm-wms-sla-check = "scm_platform.sla_checks:main"
 
 [tool.setuptools]
 packages = ["scm_platform"]
+
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["data", "infra/.terraform", "dist", "build"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]

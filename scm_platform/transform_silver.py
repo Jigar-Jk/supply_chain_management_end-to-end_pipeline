@@ -28,7 +28,7 @@ Implements the Supply Chain Control Tower Silver Layer complying with the projec
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional, Sequence, Tuple
 
 # Guard PySpark imports for local test execution and cluster portability
@@ -37,14 +37,12 @@ try:
     from pyspark.sql.functions import (
         coalesce,
         col,
-        concat,
         concat_ws,
         current_timestamp,
         current_timezone,
         expr,
         from_json,
         lit,
-        lower,
         max as spark_max,
         md5,
         min as spark_min,

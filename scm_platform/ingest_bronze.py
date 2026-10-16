@@ -22,7 +22,6 @@ from typing import Any, Dict
 # Explicit PySpark imports guarded for local and cluster portability
 try:
     from pyspark.sql import DataFrame, SparkSession
-    from pyspark.sql.functions import col, current_timestamp
     from pyspark.sql.types import (
         BooleanType,
         DoubleType,

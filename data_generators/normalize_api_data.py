@@ -13,7 +13,6 @@ Usage:
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -339,7 +338,7 @@ def run(
     print("SUMMARY")
     print("-" * 60)
 
-    print(f"\nRoutes:")
+    print("\nRoutes:")
     print(f"  Cache files discovered : {route_summary['discovered']}")
     print(f"  Records normalized     : {route_summary['normalized']}")
     if route_summary["skipped"]:
@@ -347,10 +346,10 @@ def run(
         for filename, reason in route_summary["skipped"]:
             print(f"    - {filename}: {reason}")
     else:
-        print(f"  Files skipped          : 0")
+        print("  Files skipped          : 0")
     print(f"  Output file            : {routes_output}")
 
-    print(f"\nWeather:")
+    print("\nWeather:")
     print(f"  Cache files discovered : {weather_summary['discovered']}")
     print(f"  Records normalized     : {weather_summary['normalized']}")
     if weather_summary["skipped"]:
@@ -358,7 +357,7 @@ def run(
         for filename, reason in weather_summary["skipped"]:
             print(f"    - {filename}: {reason}")
     else:
-        print(f"  Files skipped          : 0")
+        print("  Files skipped          : 0")
     print(f"  Output file            : {weather_output}")
 
     print("\n" + "=" * 60)

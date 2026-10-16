@@ -6,7 +6,6 @@ Run with:  python -m pytest tests/test_seed_api.py -v
       or:  python -m unittest tests.test_seed_api -v
 """
 
-import json
 import os
 import tempfile
 import time

@@ -13,7 +13,7 @@ Run locally with:
 import json
 import unittest
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 from data_generators.produce_gps import build_fleet, generate_messages
 from tests.test_produce_gps import NOW, build_inputs, fixed_clock

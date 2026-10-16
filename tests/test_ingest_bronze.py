@@ -148,7 +148,7 @@ class TestStreamConstructionWithMock(unittest.TestCase):
         )
         mock_schema = MagicMock()
 
-        result_df = build_autoloader_stream(mock_spark, cfg, mock_schema)
+        build_autoloader_stream(mock_spark, cfg, mock_schema)
 
         # Verify Auto Loader format requested
         mock_spark.readStream.format.assert_called_with("cloudFiles")

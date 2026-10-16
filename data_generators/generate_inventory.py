@@ -29,7 +29,7 @@ import json
 import math
 import random
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterator
 
