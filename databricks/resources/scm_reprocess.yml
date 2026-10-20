@@ -21,6 +21,8 @@ resources:
             spark_version: ${var.spark_version}
             node_type_id: ${var.node_type}
             num_workers: 0
+            # Unity Catalog access mode: reads abfss:// through the external locations (no storage keys)
+            data_security_mode: SINGLE_USER
             spark_conf:
               "spark.databricks.cluster.profile": "singleNode"
               "spark.master": "local[*]"

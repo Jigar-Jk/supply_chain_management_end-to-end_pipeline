@@ -1,29 +1,19 @@
 resource "azurerm_databricks_workspace" "dbw" {
-  name                        = "dbw-${var.project_name}-${var.environment}"
+  name                        = "dbw-${local.base}"
   resource_group_name         = azurerm_resource_group.rg.name
   location                    = var.location
-  sku                         = "premium"
-  managed_resource_group_name = "rg-dbw-${var.project_name}-${var.environment}-managed"
-
-  tags = {
-    project     = "supply-chain-control-tower"
-    environment = var.environment
-    managed_by  = "terraform"
-  }
+  sku                         = "premium" # Unity Catalog needs Premium
+  managed_resource_group_name = "rg-dbw-${local.base}-managed"
+  tags                        = local.tags
 }
 
 resource "azurerm_databricks_access_connector" "dbac" {
-  name                = "dbac-${var.project_name}-${var.environment}"
+  name                = "dbac-${local.base}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
+  tags                = local.tags
 
   identity {
     type = "SystemAssigned"
-  }
-
-  tags = {
-    project     = "supply-chain-control-tower"
-    environment = var.environment
-    managed_by  = "terraform"
   }
 }

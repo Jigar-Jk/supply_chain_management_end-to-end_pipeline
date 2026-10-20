@@ -1,17 +1,12 @@
 resource "azurerm_storage_account" "sa" {
-  name                     = replace("st${var.project_name}${var.environment}", "-", "")
+  name                     = replace("st${var.project_name}${var.name_suffix}", "-", "")
   resource_group_name      = azurerm_resource_group.rg.name
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
   account_kind             = "StorageV2"
   is_hns_enabled           = true
-
-  tags = {
-    project     = "supply-chain-control-tower"
-    environment = var.environment
-    managed_by  = "terraform"
-  }
+  tags                     = local.tags
 }
 
 resource "azurerm_storage_container" "containers" {

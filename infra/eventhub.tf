@@ -1,15 +1,12 @@
+# Standard tier: the Kafka endpoint the GPS and CDC streams use (Basic has no Kafka support).
+# Billed per hour while it exists, even idle, so destroy the stack after each working session.
 resource "azurerm_eventhub_namespace" "evhns" {
-  name                = "evhns-${var.project_name}-${var.environment}"
+  name                = "evhns-${local.base}"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "Standard"
   capacity            = 1
-
-  tags = {
-    project     = "supply-chain-control-tower"
-    environment = var.environment
-    managed_by  = "terraform"
-  }
+  tags                = local.tags
 }
 
 resource "azurerm_eventhub" "gps_events" {

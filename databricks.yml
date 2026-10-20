@@ -16,9 +16,8 @@ bundle:
 include:
   - databricks/resources/*.yml
 
-# Set once the workspace exists (cloud window); every target inherits it.
-workspace:
-  host: https://adb-REPLACE-WITH-WORKSPACE-ID.azuredatabricks.net
+# No workspace host here: the URL changes on every terraform apply, so it comes from the CLI profile
+# (databricks bundle deploy -p scm-azure; in CI from DATABRICKS_HOST).
 
 # Per-environment values; jobs refer to them as ${var.<name>}.
 variables:
@@ -37,8 +36,9 @@ variables:
     description: Databricks Runtime for all job clusters
     default: 15.4.x-scala2.12
   node_type:
-    description: VM size for the single-node job clusters
-    default: Standard_D4ds_v5
+    description: VM size for the single-node job clusters (student quota - 4 vCPUs per family, so one
+      cluster at a time; the DDSv5 family has 0 quota, DDSv4 has 4)
+    default: Standard_D4ds_v4
   warehouse_id:
     description: Serverless SQL warehouse for the Silver quality tests and the Gold refresh
     default: REPLACE-WITH-WAREHOUSE-ID
