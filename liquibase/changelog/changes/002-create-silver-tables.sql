@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS quarantine.invalid_records (
     reprocessed_flag BOOLEAN DEFAULT FALSE COMMENT 'Indicator if record was remediated and reprocessed'
 )
 USING DELTA
-COMMENT 'Quarantine table for malformed records, nulls, and referential integrity violations';
+COMMENT 'Quarantine table for malformed records, nulls, and referential integrity violations'
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 
 -- changeset scm-platform-team:silver-routes-v1
 -- comment: Cleaned and typed Silver routes table with primary key constraint

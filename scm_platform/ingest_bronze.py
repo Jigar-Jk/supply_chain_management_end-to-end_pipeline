@@ -17,7 +17,7 @@ Design Features:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Explicit PySpark imports guarded for local and cluster portability
 try:
@@ -246,13 +246,22 @@ def get_default_config(
     feed_name: str,
     storage_account: str = "stscmplatformdev",
     catalog: str = "scm_platform_dev",
+    landing_root: Optional[str] = None,
+    checkpoint_root: Optional[str] = None,
 ) -> IngestionConfig:
-    """Generate default ADLS Gen2 paths for Databricks Auto Loader ingestion."""
+    """Auto Loader paths for one feed.
+
+    landing_root / checkpoint_root default to the ADLS Gen2 containers of `storage_account`; pass them
+    to read from elsewhere (e.g. a Unity Catalog Volume on Databricks Free Edition). The checkpoint path
+    includes the catalog, so dev / qa / prod sharing one storage account never share a checkpoint.
+    """
     if feed_name not in DATASET_SCHEMAS:
         raise ValueError(f"Unknown feed_name '{feed_name}'. Valid feeds: {list(DATASET_SCHEMAS.keys())}")
 
-    landing_path = f"abfss://landing@{storage_account}.dfs.core.windows.net/{feed_name}/"
-    checkpoint_path = f"abfss://checkpoints@{storage_account}.dfs.core.windows.net/bronze/{feed_name}/"
+    landing_root = landing_root or f"abfss://landing@{storage_account}.dfs.core.windows.net"
+    checkpoint_root = checkpoint_root or f"abfss://checkpoints@{storage_account}.dfs.core.windows.net"
+    landing_path = f"{landing_root.rstrip('/')}/{feed_name}/"
+    checkpoint_path = f"{checkpoint_root.rstrip('/')}/{catalog}/bronze/{feed_name}/"
 
     return IngestionConfig(
         feed_name=feed_name,
@@ -305,8 +314,9 @@ def build_autoloader_stream(
     - format: cloudFiles
     - cloudFiles.format: json
     - cloudFiles.schemaLocation: checkpoint_path / schema
-    - cloudFiles.schemaEvolutionMode: addNewColumns (or rescueDataColumn)
-    - cloudFiles.schemaRescueDataColumn: _rescued_data
+    - cloudFiles.schemaEvolutionMode: rescue (unexpected columns / types go to the rescued column)
+    - rescuedDataColumn: _rescued_data (a reader option, not a cloudFiles.* one; Databricks rejects
+      unknown cloudFiles.* keys with CF_UNKNOWN_OPTION_KEYS_ERROR)
     """
     reader = (
         spark.readStream.format("cloudFiles")
@@ -318,7 +328,7 @@ def build_autoloader_stream(
     if include_rescue_column:
         reader = (
             reader.option("cloudFiles.schemaEvolutionMode", "rescue")
-            .option("cloudFiles.schemaRescueDataColumn", "_rescued_data")
+            .option("rescuedDataColumn", "_rescued_data")
         )
 
     raw_stream = reader.load(config.landing_path)
@@ -384,12 +394,15 @@ def ingest_all(
     catalog: str = "scm_platform_dev",
     trigger_available_now: bool = True,
     batch_id: str = "manual",
+    landing_root: Optional[str] = None,
+    checkpoint_root: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute ingestion for all configured Bronze feeds sequentially."""
     queries = {}
     for feed_name in DATASET_SCHEMAS:
         config = get_default_config(
-            feed_name, storage_account=storage_account, catalog=catalog
+            feed_name, storage_account=storage_account, catalog=catalog,
+            landing_root=landing_root, checkpoint_root=checkpoint_root,
         )
         query = ingest_feed(
             spark, feed_name, config=config, trigger_available_now=trigger_available_now, batch_id=batch_id
@@ -428,15 +441,27 @@ def main() -> None:
         default="manual",
         help="Job run id stamped on every Bronze row as _batch_id (the job passes {{job.run_id}})",
     )
+    parser.add_argument("--landing-root", default=None,
+                        help="Folder holding one sub-folder per feed (default: the storage account's landing container)")
+    parser.add_argument("--checkpoint-root", default=None,
+                        help="Auto Loader checkpoint root (default: the storage account's checkpoints container)")
     args, unknown = parser.parse_known_args()
 
     spark = SparkSession.builder.getOrCreate()
 
     if args.feed == "all":
-        ingest_all(spark, storage_account=args.storage_account, catalog=args.catalog, batch_id=args.batch_id)
+        queries = ingest_all(spark, storage_account=args.storage_account, catalog=args.catalog,
+                             batch_id=args.batch_id, landing_root=args.landing_root,
+                             checkpoint_root=args.checkpoint_root)
     else:
-        config = get_default_config(args.feed, storage_account=args.storage_account, catalog=args.catalog)
-        ingest_feed(spark, args.feed, config=config, batch_id=args.batch_id)
+        config = get_default_config(args.feed, storage_account=args.storage_account, catalog=args.catalog,
+                                    landing_root=args.landing_root, checkpoint_root=args.checkpoint_root)
+        queries = {args.feed: ingest_feed(spark, args.feed, config=config, batch_id=args.batch_id)}
+
+    # availableNow streams run in the background: wait for every one, so the job task ends (and the
+    # Silver task starts) only once Bronze is complete. A failed stream raises here and fails the task.
+    for query in queries.values():
+        query.awaitTermination()
 
 
 if __name__ == "__main__":

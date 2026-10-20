@@ -1832,6 +1832,17 @@ def _table_or_none(spark: SparkSession, table_name: str) -> Optional[DataFrame]:
     return spark.table(table_name) if spark.catalog.tableExists(table_name) else None
 
 
+def _rows_or_none(spark: SparkSession, table_name: str) -> Optional[DataFrame]:
+    """Like _table_or_none, but an existing empty table also counts as absent.
+
+    Migration 011 always creates the CDC Bronze tables; until the CDC stream has delivered its first
+    event they are empty, and the file feed must stay the source. CDC Bronze is append-only, so once
+    it has rows it stays the source.
+    """
+    df = _table_or_none(spark, table_name)
+    return df if df is not None and df.head(1) else None
+
+
 def run_silver_pipeline(
     spark: SparkSession,
     catalog: str = "scm_platform_dev",
@@ -1879,7 +1890,7 @@ def run_silver_pipeline(
 
     # 3. Transform and write Fact Order (needs customer + product dims; warehouse optional)
     # CDC (SQL Server via Debezium) is the order source when present; the file feed otherwise.
-    bronze_orders_cdc = _table_or_none(spark, f"{catalog}.bronze.orders_cdc")
+    bronze_orders_cdc = _rows_or_none(spark, f"{catalog}.bronze.orders_cdc")
     bronze_orders = (decode_order_line_cdc(bronze_orders_cdc) if bronze_orders_cdc is not None
                      else _table_or_none(spark, f"{catalog}.bronze.orders"))
     order_freshness = "source_position" if bronze_orders_cdc is not None else "updated_at"
@@ -1894,7 +1905,7 @@ def run_silver_pipeline(
         )
         write_quarantine_table(quar_order, quarantine_table, spark=spark, source_feed="orders")
 
-    bronze_inventory_cdc = _table_or_none(spark, f"{catalog}.bronze.inventory_cdc")
+    bronze_inventory_cdc = _rows_or_none(spark, f"{catalog}.bronze.inventory_cdc")
     if bronze_inventory_cdc is not None:
         inventory_current, quar_inventory_current = transform_inventory_current(
             decode_inventory_cdc(bronze_inventory_cdc), batch_id=batch_id)

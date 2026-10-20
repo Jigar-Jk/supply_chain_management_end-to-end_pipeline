@@ -108,8 +108,23 @@ class TestIngestionConfig(unittest.TestCase):
         cfg = get_default_config("routes", storage_account="stscmplatformdev", catalog="scm_platform_dev")
         self.assertEqual(cfg.feed_name, "routes")
         self.assertEqual(cfg.landing_path, "abfss://landing@stscmplatformdev.dfs.core.windows.net/routes/")
-        self.assertEqual(cfg.checkpoint_path, "abfss://checkpoints@stscmplatformdev.dfs.core.windows.net/bronze/routes/")
+        self.assertEqual(cfg.checkpoint_path,
+                         "abfss://checkpoints@stscmplatformdev.dfs.core.windows.net/scm_platform_dev/bronze/routes/")
         self.assertEqual(cfg.full_target_table_name, "scm_platform_dev.bronze.routes")
+
+    def test_environments_never_share_a_checkpoint(self):
+        dev = get_default_config("orders", catalog="scm_platform_dev")
+        prod = get_default_config("orders", catalog="scm_platform_prod")
+        self.assertEqual(dev.landing_path, prod.landing_path)          # same source files
+        self.assertNotEqual(dev.checkpoint_path, prod.checkpoint_path)  # separate progress
+
+    def test_landing_and_checkpoint_roots_can_point_at_a_volume(self):
+        cfg = get_default_config("orders", catalog="scm_platform_free",
+                                 landing_root="/Volumes/scm_platform_free/bronze/landing",
+                                 checkpoint_root="/Volumes/scm_platform_free/ops/checkpoints/")
+        self.assertEqual(cfg.landing_path, "/Volumes/scm_platform_free/bronze/landing/orders/")
+        self.assertEqual(cfg.checkpoint_path,
+                         "/Volumes/scm_platform_free/ops/checkpoints/scm_platform_free/bronze/orders/")
 
     def test_default_config_weather(self):
         cfg = get_default_config("weather")
@@ -156,8 +171,11 @@ class TestStreamConstructionWithMock(unittest.TestCase):
         mock_reader.option.assert_any_call("cloudFiles.format", "json")
         # Verify schemaLocation
         mock_reader.option.assert_any_call("cloudFiles.schemaLocation", "abfss://cp@sa/routes//schema")
-        # Verify rescue column configured
-        mock_reader.option.assert_any_call("cloudFiles.schemaRescueDataColumn", "_rescued_data")
+        # Verify rescue column configured (a plain reader option; cloudFiles.schemaRescueDataColumn does not exist)
+        mock_reader.option.assert_any_call("rescuedDataColumn", "_rescued_data")
+        # Databricks fails the stream on any unknown cloudFiles.* key (CF_UNKNOWN_OPTION_KEYS_ERROR)
+        used = {c.args[0] for c in mock_reader.option.call_args_list if c.args[0].startswith("cloudFiles.")}
+        self.assertLessEqual(used, {"cloudFiles.format", "cloudFiles.schemaLocation", "cloudFiles.schemaEvolutionMode"})
         # Verify loaded from landing path
         mock_reader.load.assert_called_with("abfss://landing@sa/routes/")
 
@@ -226,8 +244,23 @@ class TestMainEntrypoint(unittest.TestCase):
         main()
 
         mock_ingest_all.assert_called_once_with(
-            mock_spark, storage_account="stscmplatformdev", catalog="scm_platform_dev", batch_id="manual"
+            mock_spark, storage_account="stscmplatformdev", catalog="scm_platform_dev", batch_id="manual",
+            landing_root=None, checkpoint_root=None,
         )
+
+    @patch("sys.argv", ["ingest_bronze.py", "--feed", "all"])
+    @patch("scm_platform.ingest_bronze.ingest_all")
+    @patch("scm_platform.ingest_bronze.SparkSession")
+    def test_main_waits_for_every_stream(self, mock_spark_cls, mock_ingest_all):
+        """The job task must not end (and Silver must not start) while Bronze streams still run."""
+        from scm_platform.ingest_bronze import main
+        queries = {"orders": MagicMock(), "inventory": MagicMock()}
+        mock_ingest_all.return_value = queries
+
+        main()
+
+        for query in queries.values():
+            query.awaitTermination.assert_called_once()
 
     def test_bronze_metadata_adds_all_audit_columns(self):
         """_ingest_timestamp, _source_file (from _metadata.file_path) and the job run id as _batch_id."""
