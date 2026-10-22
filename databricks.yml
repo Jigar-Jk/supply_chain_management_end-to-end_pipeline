@@ -74,13 +74,17 @@ targets:
       catalog: scm_platform_dev
 
   qa:                          # QA / UAT: full pipeline on test data, sign-off on KPIs
+    presets:
+      trigger_pause_status: PAUSED   # student budget: qa jobs run on demand only
     workspace:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/qa
     variables:
       catalog: scm_platform_qa
 
   prod:
-    mode: production           # schedules active; must deploy to a shared folder, not a user folder
+    mode: production           # must deploy to a shared folder, not a user folder
+    presets:
+      trigger_pause_status: PAUSED   # student budget: a real deployment removes this line
     workspace:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/prod
     variables:
