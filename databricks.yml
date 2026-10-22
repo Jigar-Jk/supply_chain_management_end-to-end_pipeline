@@ -42,6 +42,9 @@ variables:
   warehouse_id:
     description: Serverless SQL warehouse for the Silver quality tests and the Gold refresh
     default: REPLACE-WITH-WAREHOUSE-ID
+  quarantine_alert_id:
+    description: SQL alert for this environment (terraform output quarantine_alert_ids)
+    default: REPLACE-WITH-QUARANTINE-ALERT-ID
 
 # Built on every deploy and uploaded; job tasks attach it with `libraries: - whl: ../../dist/*.whl`.
 artifacts:
