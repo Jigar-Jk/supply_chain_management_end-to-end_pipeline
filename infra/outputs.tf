@@ -31,3 +31,8 @@ output "sql_warehouse_id" {
 output "key_vault_name" {
   value = azurerm_key_vault.kv.name
 }
+
+output "quarantine_alert_ids" {
+  description = "Bundle variable quarantine_alert_id, per environment"
+  value       = { for env, alert in databricks_alert.quarantine_rate : env => alert.id }
+}

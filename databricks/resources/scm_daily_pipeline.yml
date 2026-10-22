@@ -74,6 +74,19 @@ resources:
             parameters:
               catalog: ${var.catalog}
 
+        # Early warning (>= 5 % quarantined today): evaluates the SQL alert from infra/alerts.tf and
+        # e-mails the subscribers. ALL_DONE: it also runs when a later step (the 20 % hard stop) failed.
+        - task_key: quarantine_rate_alert
+          depends_on:
+            - task_key: transform_silver
+          run_if: ALL_DONE
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            alert:
+              alert_id: ${var.quarantine_alert_id}
+              subscriptions:
+                - user_name: ${var.alert_email}
+
       tags:
         project: "scm-logistics-platform"
         managed_by: "databricks-asset-bundles"
