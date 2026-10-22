@@ -58,7 +58,9 @@ $hostUrl = $out.databricks_workspace_url.value
 $warehouse = $out.sql_warehouse_id.value
 $storage = $out.storage_account_name.value
 $kafka = "$($out.eventhub_namespace.value).servicebus.windows.net:9093"
-Write-Host "    workspace $hostUrl | warehouse $warehouse | storage $storage"
+$alertId = $out.quarantine_alert_ids.value.$Target           # the 5 % quarantine alert of this environment
+if (-not $alertId) { throw "No quarantine alert for target '$Target' in the terraform outputs." }
+Write-Host "    workspace $hostUrl | warehouse $warehouse | storage $storage | alert $alertId"
 
 # ------------------------------------------------------------------ 4. Databricks login = your az login
 $env:DATABRICKS_HOST = $hostUrl
@@ -103,7 +105,7 @@ Step "Deploying the bundle to $Target"
 Push-Location $repo
 try {
     databricks bundle deploy -t $Target "--var=warehouse_id=$warehouse" "--var=storage_account=$storage" `
-        "--var=kafka_bootstrap=$kafka" "--var=alert_email=$($account.user.name)"
+        "--var=kafka_bootstrap=$kafka" "--var=alert_email=$($account.user.name)" "--var=quarantine_alert_id=$alertId"
     Check "bundle deploy"
 } finally { Pop-Location }
 
