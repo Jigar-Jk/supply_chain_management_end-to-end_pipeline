@@ -34,6 +34,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
+from data_generators.generate_orders import parse_reference_time
+
 # ---------------------------------------------------------------------------
 # Configuration & Constants
 # ---------------------------------------------------------------------------
@@ -328,11 +330,13 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--bad-rate", type=float, default=DEFAULT_BAD_RATE)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--reference-time", type=parse_reference_time, default=DEFAULT_REFERENCE_DATETIME,
+                        help="Must match the --reference-time given to generate_orders")
     args = parser.parse_args()
     try:
         if not 0 <= args.bad_rate < 0.5:
             raise ValueError("--bad-rate must be in [0, 0.5).")
-        run(data_dir=args.data_dir, seed=args.seed, bad_rate=args.bad_rate)
+        run(data_dir=args.data_dir, seed=args.seed, bad_rate=args.bad_rate, reference_time=args.reference_time)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -9,9 +9,10 @@ import json
 import tempfile
 import unittest
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import GeneratorType
+from unittest.mock import patch
 
 from data_generators import generate_master_data
 from data_generators.generate_master_data import build_master_data
@@ -23,6 +24,8 @@ from data_generators.generate_orders import (
     UNKNOWN_PRODUCT_ID,
     UNKNOWN_WAREHOUSE_ID,
     generate_order_lines,
+    main,
+    parse_reference_time,
     run,
     usable_master_keys,
     warehouse_assortment,
@@ -125,6 +128,35 @@ class TestOrderGenerator(unittest.TestCase):
     def test_zero_bad_rate_has_unique_line_keys(self):
         keys = [(l["order_id"], l["order_line_number"]) for l in self.clean_lines]
         self.assertEqual(len(keys), len(set(keys)))
+
+    # ------------------------------------------------------------------ --reference-time (fresh data)
+
+    def test_reference_time_parsing(self):
+        utc_six = datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc)
+        self.assertEqual(parse_reference_time("2026-10-20T06:00:00Z"), utc_six)
+        self.assertEqual(parse_reference_time("2026-10-20T06:00:00"), utc_six)   # no zone -> UTC, never local time
+        now = parse_reference_time("now")
+        self.assertLess(abs((datetime.now(timezone.utc) - now).total_seconds()), 5)
+
+    def test_reference_time_moves_the_whole_feed(self):
+        ref = datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc)
+        lines = list(generate_order_lines(self.clean_keys, 300, seed=42, bad_rate=0.0, reference_time=ref))
+        newest = max(l["updated_at"] for l in lines)
+        self.assertLessEqual(newest, "2026-10-20T06:00:00Z")     # nothing from the future
+        self.assertGreaterEqual(newest, "2026-10-19T06:00:00Z")  # recent activity: passes the 26 h freshness check
+
+    @patch("sys.argv", ["generate_orders.py", "--reference-time", "2026-10-20T06:00:00Z"])
+    @patch("data_generators.generate_orders.run")
+    def test_cli_passes_reference_time_to_run(self, mock_run):
+        """The command-line option must reach run(); otherwise it is silently ignored."""
+        main()
+        self.assertEqual(mock_run.call_args.kwargs["reference_time"], datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc))
+
+    @patch("sys.argv", ["generate_orders.py"])
+    @patch("data_generators.generate_orders.run")
+    def test_cli_default_keeps_the_fixed_test_date(self, mock_run):
+        main()
+        self.assertEqual(mock_run.call_args.kwargs["reference_time"], DEFAULT_REFERENCE_DATETIME)
 
     def test_run_writes_orders_and_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

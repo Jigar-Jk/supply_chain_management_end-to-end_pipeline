@@ -326,6 +326,14 @@ def run(
     print("=" * 60)
     return written
 
+def parse_reference_time(value: str) -> datetime:
+    """'now' or an ISO timestamp such as 2026-10-20T06:00:00Z; always returned in UTC."""
+    if value == "now":
+        return datetime.now(timezone.utc).replace(microsecond=0)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic SQL Server OMS order lines.")
@@ -337,6 +345,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--bad-rate", type=float, default=DEFAULT_BAD_RATE)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--reference-time", type=parse_reference_time, default=DEFAULT_REFERENCE_DATETIME,
+                        help="'now' or an ISO timestamp (UTC): the moment the data is generated up to "
+                             "(default: the fixed 2026-10-12 used by the tests)")
     args = parser.parse_args()
 
     order_count = args.orders if args.orders is not None else SCALE_PRESETS[args.scale]
@@ -349,7 +360,7 @@ def main() -> None:
         if assortment < 1:
             raise ValueError("--skus-per-warehouse must be >= 1.")
         run(data_dir=args.data_dir, order_count=order_count, seed=args.seed, bad_rate=args.bad_rate,
-            assortment_size=assortment)
+            reference_time=args.reference_time, assortment_size=assortment)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)

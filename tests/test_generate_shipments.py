@@ -9,9 +9,10 @@ import json
 import tempfile
 import unittest
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import GeneratorType
+from unittest.mock import patch
 
 from data_generators import generate_master_data, generate_orders
 from data_generators.generate_master_data import build_master_data
@@ -22,6 +23,7 @@ from data_generators.generate_shipments import (
     TS_FORMAT,
     build_network,
     generate_shipment_records,
+    main,
     run,
     shippable_orders,
     weather_risk,
@@ -157,6 +159,13 @@ class TestShipmentGenerator(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
                 run(data_dir=Path(tmp))
+
+    @patch("sys.argv", ["generate_shipments.py", "--reference-time", "2026-10-20T06:00:00Z"])
+    @patch("data_generators.generate_shipments.run")
+    def test_cli_passes_reference_time_to_run(self, mock_run):
+        """Shipments must use the same 'today' as the orders, or they would be dispatched before them."""
+        main()
+        self.assertEqual(mock_run.call_args.kwargs["reference_time"], datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc))
 
 
 if __name__ == "__main__":
