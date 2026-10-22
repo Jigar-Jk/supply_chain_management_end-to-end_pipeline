@@ -29,7 +29,7 @@ Implements the Supply Chain Control Tower Silver Layer complying with the projec
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Guard PySpark imports for local test execution and cluster portability
 try:
@@ -710,8 +710,98 @@ def _fmt(column: str) -> str:
     return f"coalesce(cast({column} as string), 'null')"
 
 
+# ---------------------------------------------------------------------------
+# Schema drift: the file no longer matches its feed's contract (ingest_bronze.DATASET_SCHEMAS)
+# ---------------------------------------------------------------------------
+# Auto Loader (schemaEvolutionMode=rescue) keeps every field that does not fit the contract - a renamed
+# or new column, or a value of the wrong type - in _rescued_data as JSON, plus the file path under
+# "_file_path". Nothing is lost in Bronze; Silver must not drop it silently, so the drift rule runs
+# FIRST in every file feed's rule list: the quarantine then names the real cause ("unexpected column
+# qty_on_hand") instead of a symptom ("quantity_on_hand missing").
+RESCUED_FIELDS = ("filter(map_keys(from_json(_rescued_data, 'map<string,string>')), "
+                  "k -> k NOT IN ('_file_path'))")
+
+SCHEMA_DRIFT_RULE = QualityRule(
+    "RULE_SCHEMA_DRIFT",
+    f"size({RESCUED_FIELDS}) > 0",
+    f"concat('Fields not matching the feed contract (renamed, new or wrong type): ', array_join({RESCUED_FIELDS}, ', '))",
+    requires=("_rescued_data",),
+)
+
+# Agreed renames, {feed: {name in the file: name in the contract}}. Empty on purpose: the pipeline never
+# guesses a mapping (a renamed column may also have changed meaning or units). When a rename is agreed
+# with the source team, it is added here through a pull request and conform_to_contract applies it.
+COLUMN_ALIASES: Dict[str, Dict[str, str]] = {}
+
+# A file is rejected as a whole when at least this share of its rows drifted (a format change, not a
+# few bad rows); scm_daily_pipeline logs it to ops.pipeline_run_log as REJECTED_FILE.
+DRIFT_REJECT_SHARE = 0.5
+
+# Which source system each file feed comes from (ops.pipeline_run_log / ops.sla_config naming)
+FEED_SOURCE_SYSTEM = {
+    "inventory": "wms_batch", "warehouses": "wms_batch",
+    "shipments": "carrier_api", "carriers": "carrier_api", "routes": "carrier_api", "weather": "carrier_api",
+    "orders": "sqlserver_cdc", "customers": "sqlserver_cdc", "products": "sqlserver_cdc",
+}
+
+
+def conform_to_contract(df: DataFrame, feed: str) -> DataFrame:
+    """Apply the agreed renames of COLUMN_ALIASES[feed]: fill the contract column from the rescued field
+    and remove that field from _rescued_data, so it no longer counts as drift. No-op without aliases."""
+    aliases = COLUMN_ALIASES.get(feed, {})
+    if not aliases or "_rescued_data" not in df.columns:
+        return df
+    out = df
+    for source, target in aliases.items():
+        rescued = expr(f"get_json_object(_rescued_data, '$.{source}')")
+        out = out.withColumn(target, coalesce(col(target), rescued.cast(out.schema[target].dataType)))
+    mapped = ", ".join(f"'{s}'" for s in aliases)
+    return out.withColumn(
+        "_rescued_data",
+        expr(f"to_json(map_filter(from_json(_rescued_data, 'map<string,string>'), (k, v) -> k NOT IN ({mapped})))"),
+    )
+
+
+def schema_drift_report(df_bronze: DataFrame, reject_share: float = DRIFT_REJECT_SHARE) -> DataFrame:
+    """One row per source file with drifted rows: rows read / drifted, the unexpected fields, and whether
+    the whole file is rejected (drifted share >= reject_share). Empty when nothing drifted."""
+    schema = "source_file string, rows_read bigint, rows_drifted bigint, unexpected_fields array<string>, rejected boolean"
+    if "_rescued_data" not in df_bronze.columns or "_source_file" not in df_bronze.columns:
+        return df_bronze.sparkSession.createDataFrame([], schema)
+    per_row = df_bronze.select(col("_source_file").alias("source_file"), expr(RESCUED_FIELDS).alias("_fields"))
+    return (
+        per_row.groupBy("source_file").agg(
+            expr("count(*)").alias("rows_read"),
+            expr("count_if(coalesce(size(_fields), 0) > 0)").alias("rows_drifted"),
+            expr("array_sort(array_distinct(flatten(collect_list(_fields))))").alias("unexpected_fields"),
+        )
+        .filter(col("rows_drifted") > 0)
+        .withColumn("rejected", col("rows_drifted") >= col("rows_read") * lit(reject_share))
+    )
+
+
+def rejected_file_log_rows(report: DataFrame, feed: str, run_id: str) -> DataFrame:
+    """ops.pipeline_run_log rows (status REJECTED_FILE) for the files schema_drift_report rejects."""
+    now = current_timestamp()
+    return report.filter(col("rejected")).select(
+        lit(run_id).alias("run_id"),
+        lit(FEED_SOURCE_SYSTEM.get(feed, feed)).alias("source_system"),
+        expr(f"concat('schema_check:{feed}:', source_file)").alias("step"),
+        lit("silver").alias("layer"),
+        now.alias("started_at"),
+        now.alias("ended_at"),
+        col("rows_read").cast(LongType()),
+        lit(0).cast(LongType()).alias("rows_written"),
+        col("rows_drifted").cast(LongType()).alias("rows_quarantined"),
+        lit("REJECTED_FILE").alias("status"),
+        expr("concat('Schema drift - fields not matching the feed contract: ', array_join(unexpected_fields, ', '))")
+        .alias("error_message"),
+    )
+
+
 # Rule sets: the single source of truth for each dimension's quality gate (order = priority).
 ROUTE_RULES = [
+    SCHEMA_DRIFT_RULE,
     _missing_key_rule("RULE_ROUTE_ID_MISSING", "route_id"),
     QualityRule(
         "RULE_ROUTE_COORDINATES",
@@ -732,6 +822,7 @@ ROUTE_RULES = [
 ]
 
 CARRIER_RULES = [
+    SCHEMA_DRIFT_RULE,
     _missing_key_rule("RULE_CARRIER_ID_EMPTY", "carrier_id"),
     QualityRule("RULE_CARRIER_OTIF_TARGET_RANGE", "contracted_otif_target NOT BETWEEN 0 AND 100",
                 f"concat('contracted_otif_target must be 0-100, got ', {_fmt('contracted_otif_target')})",
@@ -739,10 +830,12 @@ CARRIER_RULES = [
 ]
 
 CUSTOMER_RULES = [
+    SCHEMA_DRIFT_RULE,
     _missing_key_rule("RULE_CUSTOMER_ID_EMPTY", "customer_id"),
 ]
 
 PRODUCT_RULES = [
+    SCHEMA_DRIFT_RULE,
     _missing_key_rule("RULE_PRODUCT_ID_MISSING", "product_id"),
     QualityRule("RULE_PRODUCT_WEIGHT_NON_POSITIVE", "unit_weight_kg <= 0",
                 f"concat('unit_weight_kg must be > 0, got ', {_fmt('unit_weight_kg')})"),
@@ -755,6 +848,7 @@ PRODUCT_RULES = [
 ]
 
 WAREHOUSE_RULES = [
+    SCHEMA_DRIFT_RULE,
     _missing_key_rule("RULE_WAREHOUSE_ID_MISSING", "warehouse_id"),
     QualityRule(
         "RULE_WAREHOUSE_COORDINATES",
@@ -996,6 +1090,7 @@ def shipment_rules(has_warehouse_dim: bool) -> List[QualityRule]:
     """Quality-gate rules for shipments, evaluated after dimension lookups (order = priority)."""
     statuses = ", ".join(f"'{x}'" for x in SHIPMENT_STATUSES)
     rules = [
+        SCHEMA_DRIFT_RULE,
         _missing_key_rule("RULE_SHIPMENT_ID_MISSING", "shipment_id"),
         QualityRule("RULE_TIMESTAMP_PARSE", "_dispatch_ts IS NULL OR _planned_ts IS NULL",
                     f"concat('Unparseable dispatch or planned delivery timestamp: ', {_fmt('dispatch_time_utc')}, "
@@ -1260,6 +1355,7 @@ ORDER_WORKING_COLUMNS = (
 def order_rules(has_warehouse_dim: bool) -> List[QualityRule]:
     """Quality-gate rules for order lines, evaluated after dimension lookups (order = priority)."""
     rules = [
+        SCHEMA_DRIFT_RULE,
         _missing_key_rule("RULE_ORDER_ID_MISSING", "order_id"),
         QualityRule("RULE_ORDER_LINE_NUMBER_INVALID", "order_line_number IS NULL OR order_line_number <= 0",
                     f"concat('order_line_number must be > 0, got ', {_fmt('order_line_number')})"),
@@ -1475,6 +1571,7 @@ INVENTORY_WORKING_COLUMNS = (
 def inventory_rules() -> List[QualityRule]:
     """Quality-gate rules for WMS snapshot rows, evaluated after dimension lookups (order = priority)."""
     return [
+        SCHEMA_DRIFT_RULE,
         _missing_key_rule("RULE_INVENTORY_WAREHOUSE_ID_MISSING", "warehouse_id"),
         _missing_key_rule("RULE_INVENTORY_PRODUCT_ID_MISSING", "product_id"),
         QualityRule("RULE_SNAPSHOT_DATE_INVALID", "_snapshot_ts IS NULL",
@@ -1855,6 +1952,18 @@ def run_silver_pipeline(
     bronze.inventory) and the dimensions they reference exist.
     """
     quarantine_table = f"{catalog}.quarantine.records"
+    run_log_table = f"{catalog}.ops.pipeline_run_log"
+
+    def file_feed(df, feed):
+        """Apply agreed renames (COLUMN_ALIASES), then log this run's files rejected for schema drift."""
+        if df is None:
+            return None
+        df = conform_to_contract(df, feed)
+        current = df.filter(col("_batch_id") == batch_id) if "_batch_id" in df.columns else df
+        rejected = rejected_file_log_rows(schema_drift_report(current), feed, batch_id)
+        if spark.catalog.tableExists(run_log_table) and rejected.head(1):
+            rejected.write.mode("append").saveAsTable(run_log_table)
+        return df
 
     def load_dimension(name, transform, bronze_df, sk_col, feed):
         existing = _table_or_none(spark, f"{catalog}.silver.{name}")
@@ -1864,11 +1973,11 @@ def run_silver_pipeline(
         return dim_df
 
     # 1. Read Bronze tables
-    bronze_routes = spark.table(f"{catalog}.bronze.routes")
-    bronze_shipments = spark.table(f"{catalog}.bronze.shipments")
-    bronze_weather = spark.table(f"{catalog}.bronze.weather")
+    bronze_routes = file_feed(spark.table(f"{catalog}.bronze.routes"), "routes")
+    bronze_shipments = file_feed(spark.table(f"{catalog}.bronze.shipments"), "shipments")
+    bronze_weather = file_feed(spark.table(f"{catalog}.bronze.weather"), "weather")
     # Carrier master is preferred; fall back to carrier IDs seen on shipments.
-    bronze_carriers = _table_or_none(spark, f"{catalog}.bronze.carriers")
+    bronze_carriers = file_feed(_table_or_none(spark, f"{catalog}.bronze.carriers"), "carriers")
     if bronze_carriers is None:
         bronze_carriers = bronze_shipments
 
@@ -1881,7 +1990,7 @@ def run_silver_pipeline(
         ("dim_product", transform_dim_product, "products", "product_sk"),
         ("dim_customer", transform_dim_customer, "customers", "customer_sk"),
     ]:
-        bronze_df = _table_or_none(spark, f"{catalog}.bronze.{bronze_name}")
+        bronze_df = file_feed(_table_or_none(spark, f"{catalog}.bronze.{bronze_name}"), bronze_name)
         if bronze_df is not None:
             dims[name] = load_dimension(name, transform, bronze_df, sk_col, bronze_name)
 
@@ -1892,7 +2001,7 @@ def run_silver_pipeline(
     # CDC (SQL Server via Debezium) is the order source when present; the file feed otherwise.
     bronze_orders_cdc = _rows_or_none(spark, f"{catalog}.bronze.orders_cdc")
     bronze_orders = (decode_order_line_cdc(bronze_orders_cdc) if bronze_orders_cdc is not None
-                     else _table_or_none(spark, f"{catalog}.bronze.orders"))
+                     else file_feed(_table_or_none(spark, f"{catalog}.bronze.orders"), "orders"))
     order_freshness = "source_position" if bronze_orders_cdc is not None else "updated_at"
     if bronze_orders is not None and "dim_customer" in dims and "dim_product" in dims:
         fact_order, quar_order = transform_fact_order(
@@ -1916,7 +2025,7 @@ def run_silver_pipeline(
         write_quarantine_table(quar_inventory_current, quarantine_table, spark=spark, source_feed="inventory_cdc")
 
     # 4. Transform and write Fact Inventory Snapshot (WMS nightly reconciliation)
-    bronze_inventory = _table_or_none(spark, f"{catalog}.bronze.inventory")
+    bronze_inventory = file_feed(_table_or_none(spark, f"{catalog}.bronze.inventory"), "inventory")
     if bronze_inventory is not None and "dim_warehouse" in dims and "dim_product" in dims:
         fact_inventory, quar_inventory = transform_fact_inventory_snapshot(
             bronze_inventory, dims["dim_warehouse"], dims["dim_product"], dim_date, batch_id=batch_id
