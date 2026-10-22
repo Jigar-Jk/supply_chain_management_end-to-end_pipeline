@@ -1,5 +1,6 @@
 -- DQ tile 4: pipeline SLA status per source (GREEN / AMBER / RED).
--- RED   : an SLA miss was logged in the last 24 hours, or no successful run within 2 x max_lag_minutes
+-- RED   : an SLA miss or a file rejected for schema drift was logged in the last 24 hours,
+--         or no successful run within 2 x max_lag_minutes
 -- AMBER : last successful run older than max_lag_minutes
 -- GREEN : otherwise
 WITH last_success AS (
@@ -11,7 +12,7 @@ WITH last_success AS (
 recent_miss AS (
   SELECT source_system, max(ended_at) AS last_sla_miss, max_by(error_message, ended_at) AS miss_message
   FROM ops.pipeline_run_log
-  WHERE status = 'SLA_MISS' AND ended_at >= current_timestamp() - INTERVAL 24 HOURS
+  WHERE status IN ('SLA_MISS', 'REJECTED_FILE') AND ended_at >= current_timestamp() - INTERVAL 24 HOURS
   GROUP BY source_system
 ),
 lag AS (

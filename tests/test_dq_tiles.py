@@ -97,6 +97,24 @@ class TestDqTiles(unittest.TestCase):
         wms = next(r for r in self.tiles["04_pipeline_sla_status"] if r.source_system == "wms_batch")
         self.assertEqual(wms.miss_message, "WMS snapshot missing")
 
+    def test_tile4_rejected_file_turns_source_red(self):
+        """A file rejected for schema drift turns its source RED even when the job itself succeeded."""
+        view = local_name("ops", "pipeline_run_log")
+        current = self.spark.table(view)        # snapshot: a view must not be redefined from itself
+        original = self.spark.createDataFrame(current.collect(), current.schema)
+        drift = (self.spark.createDataFrame(
+                     [("sqlserver_cdc", "REJECTED_FILE", 3, "Schema drift - fields not matching the feed contract: qty")],
+                     "source_system string, status string, mins int, error_message string")
+                 .withColumn("ended_at", F.expr("current_timestamp() - make_interval(0, 0, 0, 0, 0, mins, 0)")))
+        original.unionByName(drift).createOrReplaceTempView(view)
+        try:
+            tile = self.spark.sql(localize_sql((DQ_DIR / "04_pipeline_sla_status.sql").read_text(encoding="utf-8")))
+            cdc = next(r for r in tile.collect() if r.source_system == "sqlserver_cdc")
+            self.assertEqual(cdc.sla_status, "RED")
+            self.assertIn("Schema drift", cdc.miss_message)
+        finally:
+            original.createOrReplaceTempView(view)
+
     def test_tiles_read_only_bronze_quarantine_and_ops(self):
         import re
         for p in DQ_DIR.glob("*.sql"):
