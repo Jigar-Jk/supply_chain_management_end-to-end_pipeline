@@ -1,3 +1,4 @@
 pyspark==4.1.1
 requests==2.33.1
 ruff==0.11.0
+pyyaml==6.0.3
