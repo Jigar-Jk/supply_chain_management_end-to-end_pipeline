@@ -132,9 +132,22 @@ def grants_of(resource_name):
 
 class TestGrantsAsCode(unittest.TestCase):
 
-    def test_only_two_grant_resources(self):
+    def test_only_the_expected_grant_resources(self):
         text = GOVERNANCE_TF.read_text(encoding="utf-8")
-        self.assertEqual(sorted(re.findall(r'resource "databricks_grants" "(\w+)"', text)), ["catalog", "gold"])
+        self.assertEqual(sorted(re.findall(r'resource "databricks_grants" "(\w+)"', text)),
+                         ["catalog", "checkpoints", "gold", "landing"])
+
+    def test_pipeline_files_access_is_least_privilege(self):
+        self.assertEqual(grants_of("landing"), {"pipeline": {"READ_FILES"}})  # reads landing, never writes it
+        self.assertEqual(grants_of("checkpoints"), {"pipeline": {"READ_FILES", "WRITE_FILES"}})
+        text = GOVERNANCE_TF.read_text(encoding="utf-8")
+        for location in ("rejected", "managed"):
+            self.assertNotIn(f'locations["{location}"]', text)
+
+    def test_cd_secret_is_never_printed(self):
+        outputs = (GOVERNANCE_TF.parent / "outputs.tf").read_text(encoding="utf-8")
+        body = dict(blocks(outputs, r'output "(\w+)" \{'))["pipeline_client_secret"]
+        self.assertRegex(body, r"sensitive\s*=\s*true")
 
     def test_analyst_can_only_enter_the_catalog(self):
         self.assertEqual(grants_of("catalog")["analyst"], {"USE_CATALOG"})

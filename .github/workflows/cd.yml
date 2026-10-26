@@ -1,0 +1,156 @@
+# CD: deploy the tested code dev -> qa -> (manual approval) -> prod, schema first, then the jobs.
+# Started by hand (Actions > CD > Run workflow): the workspace only exists during an Azure session.
+# scripts/up.ps1 stores that session's values (workspace URL, ids, the pipeline's OAuth secret) in
+# GitHub; outside a session the run stops at the first step. Tests are not repeated here: main only
+# accepts commits whose CI `test` check passed.
+#
+# Every job logs in as the scm-pipeline service principal (OAuth, DATABRICKS_CLIENT_ID / _SECRET):
+# the Databricks CLI and scripts/apply_migrations.py both read these variables. Bundle variables come
+# from BUNDLE_VAR_<name>. A failed job stops everything after it, so a broken build never reaches prod.
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_pipeline:
+        description: "Run the daily pipeline on dev after deploying (integration test, ~30 min of cluster time)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One deployment at a time: one workspace, and the student quota fits one cluster.
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+# The repo is public, so Actions logs are too, and only secrets are masked in them: the workspace URL
+# and the e-mail address are secrets; ids stay readable variables.
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  BUNDLE_VAR_warehouse_id: ${{ vars.WAREHOUSE_ID }}
+  BUNDLE_VAR_storage_account: ${{ vars.STORAGE_ACCOUNT }}
+  BUNDLE_VAR_kafka_bootstrap: ${{ vars.KAFKA_BOOTSTRAP }}
+  BUNDLE_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+  BUNDLE_VAR_pipeline_sp: ${{ vars.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLI_VERSION: "1.17.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Session values are set (run scripts/up.ps1 first)
+        run: |
+          missing=""
+          for name in DATABRICKS_HOST DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET BUNDLE_VAR_warehouse_id; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not set:$missing. Start an Azure session with scripts/up.ps1, then run CD again."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lint
+        run: pip install ruff==0.11.0 && ruff check .
+
+      - uses: databricks/setup-cli@v1.17.0
+        with:
+          version: ${{ env.DATABRICKS_CLI_VERSION }}
+
+      # Catches what only the workspace can check: unknown fields, unresolved variables, run_as rules
+      - name: Validate the bundle for every environment
+        run: |
+          for target in dev qa prod; do
+            echo "::group::bundle validate -t $target"
+            databricks bundle validate -t "$target"
+            echo "::endgroup::"
+          done
+
+  dev:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: dev
+    env:
+      BUNDLE_VAR_quarantine_alert_id: ${{ vars.QUARANTINE_ALERT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests==2.33.1
+      - uses: databricks/setup-cli@v1.17.0
+        with:
+          version: ${{ env.DATABRICKS_CLI_VERSION }}
+
+      - name: Migrations (new changesets only)
+        run: python scripts/apply_migrations.py --host "$DATABRICKS_HOST" --warehouse-id "$BUNDLE_VAR_warehouse_id" --catalog scm_platform_dev
+
+      - name: Deploy the bundle
+        run: databricks bundle deploy -t dev
+
+      - name: Integration test - run the daily pipeline
+        if: inputs.run_pipeline
+        run: databricks bundle run -t dev scm_daily_pipeline
+
+  qa:
+    needs: dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: qa
+    env:
+      BUNDLE_VAR_quarantine_alert_id: ${{ vars.QUARANTINE_ALERT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests==2.33.1
+      - uses: databricks/setup-cli@v1.17.0
+        with:
+          version: ${{ env.DATABRICKS_CLI_VERSION }}
+
+      - name: Migrations (new changesets only)
+        run: python scripts/apply_migrations.py --host "$DATABRICKS_HOST" --warehouse-id "$BUNDLE_VAR_warehouse_id" --catalog scm_platform_qa
+
+      - name: Deploy the bundle
+        run: databricks bundle deploy -t qa
+
+      # Here, not in the prod job: GitHub asks for the approval before the prod job starts, so the
+      # reviewer reads this plan first.
+      - name: Prod migration plan (read before approving prod)
+        run: python scripts/apply_migrations.py --host "$DATABRICKS_HOST" --warehouse-id "$BUNDLE_VAR_warehouse_id" --catalog scm_platform_prod --dry-run
+
+  prod:
+    needs: qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod          # waits for a required reviewer; only the main branch may deploy
+    env:
+      BUNDLE_VAR_quarantine_alert_id: ${{ vars.QUARANTINE_ALERT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests==2.33.1
+      - uses: databricks/setup-cli@v1.17.0
+        with:
+          version: ${{ env.DATABRICKS_CLI_VERSION }}
+
+      - name: Migrations (new changesets only)
+        run: python scripts/apply_migrations.py --host "$DATABRICKS_HOST" --warehouse-id "$BUNDLE_VAR_warehouse_id" --catalog scm_platform_prod
+
+      # Jobs run as scm-pipeline (run_as in databricks.yml); schedules stay paused (student budget)
+      - name: Deploy the bundle
+        run: databricks bundle deploy -t prod

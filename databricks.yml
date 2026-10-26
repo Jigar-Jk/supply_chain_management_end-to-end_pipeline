@@ -45,6 +45,10 @@ variables:
   quarantine_alert_id:
     description: SQL alert for this environment (terraform output quarantine_alert_ids)
     default: REPLACE-WITH-QUARANTINE-ALERT-ID
+  pipeline_sp:
+    description: Application id of the scm-pipeline service principal; prod jobs run as it
+      (terraform output pipeline_client_id)
+    default: REPLACE-WITH-PIPELINE-APP-ID
 
 # Built on every deploy and uploaded; job tasks attach it with `libraries: - whl: ../../dist/*.whl`.
 artifacts:
@@ -86,6 +90,8 @@ targets:
 
   prod:
     mode: production           # must deploy to a shared folder, not a user folder
+    run_as:
+      service_principal_name: ${var.pipeline_sp}   # prod always runs as the pipeline, whoever deploys
     presets:
       trigger_pause_status: PAUSED   # student budget: a real deployment removes this line
     workspace:

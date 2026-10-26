@@ -14,6 +14,7 @@ resource "databricks_service_principal" "pipeline" {
   display_name          = "scm-pipeline"
   databricks_sql_access = true
   workspace_access      = true
+  allow_cluster_create  = true # job clusters are created as the identity the job runs as
 }
 
 # ------------------------------------------------------------------ permissions (Unity Catalog grants)
@@ -62,6 +63,40 @@ resource "databricks_permissions" "warehouse" {
     service_principal_name = databricks_service_principal.pipeline.application_id
     permission_level       = "CAN_USE"
   }
+}
+
+# Files outside the catalogs: Bronze reads the landing container, Auto Loader keeps its progress in
+# checkpoints. Catalog grants do not reach external locations, so the pipeline gets them here.
+# rejected and managed get no grant: no job reads or writes them directly.
+resource "databricks_grants" "landing" {
+  external_location = databricks_external_location.locations["landing"].id
+
+  grant {
+    principal  = databricks_service_principal.pipeline.application_id
+    privileges = ["READ_FILES"]
+  }
+}
+
+resource "databricks_grants" "checkpoints" {
+  external_location = databricks_external_location.locations["checkpoints"].id
+
+  grant {
+    principal  = databricks_service_principal.pipeline.application_id
+    privileges = ["READ_FILES", "WRITE_FILES"]
+  }
+}
+
+# The streaming job reads the Event Hubs connection string from this scope.
+resource "databricks_secret_acl" "pipeline_reads_secrets" {
+  scope      = databricks_secret_scope.scm_platform.name
+  principal  = databricks_service_principal.pipeline.application_id
+  permission = "READ"
+}
+
+# CD logs in as the pipeline (OAuth machine-to-machine): client id = application_id, plus this secret.
+# Recreated on every apply of a fresh stack; scripts/up.ps1 hands it to GitHub without printing it.
+resource "databricks_service_principal_secret" "pipeline" {
+  service_principal_id = databricks_service_principal.pipeline.id
 }
 
 # ------------------------------------------------------------------ PII access (masking)

@@ -36,3 +36,14 @@ output "quarantine_alert_ids" {
   description = "Bundle variable quarantine_alert_id, per environment"
   value       = { for env, alert in databricks_alert.quarantine_rate : env => alert.id }
 }
+
+output "pipeline_client_id" {
+  description = "CD login: DATABRICKS_CLIENT_ID (GitHub secret, set by scripts/up.ps1)"
+  value       = databricks_service_principal.pipeline.application_id
+}
+
+output "pipeline_client_secret" {
+  description = "CD login: DATABRICKS_CLIENT_SECRET (GitHub secret, set by scripts/up.ps1)"
+  value       = databricks_service_principal_secret.pipeline.secret
+  sensitive   = true # never shown in plan / apply output
+}

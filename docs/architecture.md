@@ -164,17 +164,22 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  DEV["Developer<br/>git push / PR"] --> GHA["GitHub Actions"]
-  GHA --> L["Lint + unit tests"] --> V["bundle validate"] --> D1["Deploy DEV<br/>+ integration run"]
-  D1 --> D2["Deploy QA"] --> APP{{"Manual approval"}} --> D3["Deploy PROD"]
+  PR["Pull request"] --> CI["CI (every PR)<br/>lint · tests · wheel"] --> MAIN["merge to main<br/>(test check required)"]
+  MAIN --> RUN["CD, started by hand<br/>during an Azure session"]
+  RUN --> B["build<br/>lint · bundle validate ×3"] --> D1["DEV<br/>migrations · deploy<br/>+ daily pipeline run"]
+  D1 --> D2["QA<br/>migrations · deploy<br/>+ prod migration plan"] --> APP{{"Manual approval<br/>(prod environment)"}}
+  APP --> D3["PROD<br/>migrations · deploy<br/>runs as scm-pipeline"]
 
   subgraph OWN["Who owns what"]
-    TF["Terraform<br/>Azure resources + UC catalog/schemas"]
-    LB["Liquibase<br/>tables · views · grants"]
-    DAB["Asset Bundles<br/>jobs · pipelines · schedules"]
+    TF["Terraform<br/>Azure resources · UC catalogs/schemas · grants · service principals"]
+    LB["Liquibase changelog<br/>tables · views<br/>(applied by scripts/apply_migrations.py)"]
+    DAB["Asset Bundles<br/>jobs · schedules"]
   end
-  D1 -.-> TF & LB & DAB
 ```
+
+Every CD job logs in as the `scm-pipeline` service principal. The migration runner records applied
+changesets in `ops.schema_changelog` per catalog, so a re-run only applies new ones. `scripts/up.ps1`
+stores the session's values in GitHub; `scripts/github_envs.ps1` sets up the environments and the gate.
 
 ## 6. Substitutions (documented)
 
