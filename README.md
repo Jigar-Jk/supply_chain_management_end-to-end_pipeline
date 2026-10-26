@@ -140,7 +140,8 @@ python -m local.preview.run_local_pipeline --simulate-missing-wms-night   # SLA 
 python -m local.preview.demo_reprocessing                # quarantine -> reprocessing demo
 ```
 
-Streaming and CDC run in Docker (Kafka, Kafka Connect + Debezium, Spark). See the usage notes at
+Streaming and CDC run in Docker (Kafka, Kafka Connect + Debezium, Spark). The CDC design and a
+step-by-step demo are in [docs/cdc.md](docs/cdc.md). See also the usage notes at
 the top of [local/streaming/docker-compose.yml](local/streaming/docker-compose.yml) and the SQL
 Server CDC setup in [cdc/sqlserver/](cdc/sqlserver/). Secrets (`DEBEZIUM_SQL_PASSWORD`,
 `ORS_API_KEY`) come from environment variables, never from files.
@@ -176,7 +177,6 @@ databricks bundle run      -t dev scm_daily_pipeline
 
 | Charter | Used here | Why |
 |---|---|---|
-| Oracle OMS (CDC) | SQL Server with CDC + Debezium | Same log-based CDC pattern (LSN instead of SCN); available locally |
 | Azure Event Hubs | Kafka locally; Event Hubs (Kafka endpoint) in the cloud | Same Kafka API, so the streaming code is unchanged |
 
 ## Documentation

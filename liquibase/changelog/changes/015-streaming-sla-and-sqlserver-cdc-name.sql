@@ -6,8 +6,8 @@
 --                 every 30 minutes (--available-now, no cluster running 24/7), so a source can be
 --                 up to ~30 min behind between runs. Limits: sqlserver_cdc 45 min, gps_stream 40 min
 --                 (AMBER above, RED above 2x). A continuous deployment would set them back to 15 / 5.
---              2. The OMS source is SQL Server (documented substitution for the charter's Oracle):
---                 oracle_cdc is renamed sqlserver_cdc, ORACLE_OMS is renamed SQLSERVER_OMS, and
+--              2. The OMS source is SQL Server: the earlier source names are renamed to
+--                 sqlserver_cdc and SQLSERVER_OMS, and
 --                 table / column descriptions say SQL Server OMS.
 -- 013 is not edited: changing an applied changeset breaks its checksum on every database that ran it.
 -- Author: scm-platform-team

@@ -1410,7 +1410,7 @@ def transform_fact_order(
 
     Grain: one row per order line (order_id + order_line_number).
     Sources: the OMS order-line file feed (bronze.orders), or Debezium CDC events decoded with
-    decode_order_line_cdc (bronze.orders_cdc; SQL Server in place of the charter's Oracle).
+    decode_order_line_cdc (bronze.orders_cdc, SQL Server OMS).
 
     Versions vs duplicates (split_latest_versions): the latest version wins; older versions are
     superseded history, rows tied with the winner are RULE_DUPLICATE_KEY.
