@@ -2,8 +2,8 @@
 
 -- ============================================================================
 -- Changeset: 006-orders-feed-and-fact-order-measures
--- Description: 1. Bronze table for Oracle OMS order lines (file feed standing in for
---                 Oracle CDC until the Debezium path exists).
+-- Description: 1. Bronze table for the OMS order lines (file feed, used when no CDC
+--                 feed is present).
 --              2. fact_order measures/attributes needed by Gold:
 --                 shipped_quantity (fill rate), updated_at (CDC freshness / stale-update
 --                 guard on MERGE).

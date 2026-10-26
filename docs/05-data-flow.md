@@ -16,7 +16,7 @@ Pattern 2: Batch Files (PLANNED)
 [WMS NDJSON Drops]    ──> [ADLS Gen2 Landing] ──> [Databricks Auto Loader] ──> [Bronze Delta Table]
 
 Pattern 3: Change Data Capture (PLANNED)
-[Oracle ERP Database] ──> [Debezium CDC] ──> [Azure Event Hub] ──> [Structured Streaming] ──> [Bronze Delta Table]
+[SQL Server OMS] ──> [Debezium CDC] ──> [Azure Event Hub] ──> [Structured Streaming] ──> [Bronze Delta Table]
 
 Pattern 4: Real-Time Streaming (PLANNED)
 [GPS/RFID Telemetry]  ──> [Azure Event Hub] ──> [Structured Streaming] ──> [Bronze Delta Table]
@@ -53,11 +53,11 @@ Processes scheduled batch exports from enterprise Warehouse Management Systems (
 ## 3. Change Data Capture (CDC) Flow (`PLANNED`)
 
 ### Purpose:
-Captures row-level operational changes (inserts, updates, deletes) in core relational transaction systems (e.g., Oracle ERP purchase orders, line items, and fulfillment tables) with minimal latency.
+Captures row-level operational changes (inserts, updates, deletes) in core relational transaction systems (the SQL Server OMS order lines and inventory) with minimal latency.
 
 ### Planned Flow:
-1. **Source:** Oracle ERP transactional database transaction log.
-2. **CDC Engine (Debezium):** Debezium reads database redo logs, transforming row-level mutations into structured change events.
+1. **Source:** SQL Server OMS transaction log (CDC change tables).
+2. **CDC Engine (Debezium):** Debezium reads the CDC change tables, transforming row-level mutations into structured change events.
 3. **Messaging Broker (Azure Event Hubs):** Events stream directly into an Event Hub topic partition.
 4. **Streaming Engine (Databricks Structured Streaming):** A continuous Spark Structured Streaming job reads the Event Hub stream with checkpointing.
 5. **Target (Bronze):** Raw CDC envelopes (before/after state, operation type `c`/`u`/`d`, timestamp) append directly into the Bronze ERP CDC Delta table.
@@ -92,7 +92,7 @@ Captures high-frequency live geolocation and environmental telemetry from moving
 | Event Hub Entity | Target Ingestion Flows | Architectural Configuration & Role |
 |---|---|---|
 | **`evhns-scm-platform-dev`** (Namespace) | Pattern 3 (CDC) & Pattern 4 (Streaming) | Standard SKU root streaming broker managing security, public endpoints, and throughput capacity (1 TU). |
-| **`gps-events`** (Event Hub) | • **Pattern 4:** Real-time GPS beacons, speed, temperature, and RFID yard reads.<br>• **Pattern 3:** Inbound Oracle ERP row-mutation change events from Debezium. | • **8 Partitions:** Matches parallel Spark worker readers, prevents hot-spotting via key-based routing (`vehicle_id`, `shipment_id`).<br>• **7-Day Retention:** Full 168-hour buffer allowing cluster maintenance, crash recovery, and stream backfills. |
+| **`gps-events`** (Event Hub) | • **Pattern 4:** Real-time GPS beacons, speed, temperature, and RFID yard reads.<br>• **Pattern 3:** Inbound SQL Server OMS row-mutation change events from Debezium. | • **8 Partitions:** Matches parallel Spark worker readers, prevents hot-spotting via key-based routing (`vehicle_id`, `shipment_id`).<br>• **7-Day Retention:** Full 168-hour buffer allowing cluster maintenance, crash recovery, and stream backfills. |
 
 > **Status Notice:** Both the namespace and `gps-events` hub are configured in `eventhub.tf` as **`CONFIGURED (PLANNED)`**. Physical creation in Azure occurs only when `terraform apply` is executed in a subsequent deployment stage.
 

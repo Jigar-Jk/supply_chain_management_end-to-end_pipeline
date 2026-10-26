@@ -16,7 +16,7 @@ flowchart LR
   subgraph SRC["Sources"]
     API["REST API<br/>OpenRouteService · Open-Meteo<br/>+ carrier shipments"]
     WMS["Batch file<br/>WMS nightly stock recon<br/>NDJSON, due 02:00 UTC"]
-    OMS["CDC source<br/>SQL Server OMS<br/>orders + inventory<br/>(substitutes Oracle)"]
+    OMS["CDC source<br/>SQL Server OMS<br/>orders + inventory"]
     GPS["Streaming<br/>GPS / RFID trucks + pallets"]
     MD["Master data<br/>warehouses · products<br/>customers · carriers"]
   end
@@ -136,6 +136,8 @@ stateDiagram-v2
 
 ## 4. CDC path in detail
 
+Design decisions, failure scenarios and the local demo runbook: [cdc.md](cdc.md).
+
 ```mermaid
 sequenceDiagram
   participant App as OMS application
@@ -178,7 +180,6 @@ flowchart LR
 
 | Charter / guide | As built | Why |
 |---|---|---|
-| Oracle OMS + LogMiner | SQL Server + CDC | Team familiarity; same log-based pattern (LSN ≈ SCN); pipeline is database-agnostic from Bronze on |
 | AWS Kinesis | Azure Event Hubs (Kafka protocol) | Stack 2 is Azure; local development uses Kafka, a configuration-only switch |
 | FedEx / DHL / Maersk APIs | OpenRouteService + Open-Meteo | Commercial carrier APIs need accounts; real API shape, synthetic carrier fields |
 | DLT expectations | PySpark rule lists per feed | Same rules for the gate, the reprocessing job and the tests; testable locally |

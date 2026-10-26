@@ -1,0 +1,14 @@
+# Who reviews what. GitHub requests a review from the owner of every path a pull request touches.
+# The last matching line wins. Add reviewers (e.g. a mentor) per area as the team grows.
+
+*                      @Jigar-Jk
+
+# Infrastructure, deployment and repository settings: changes here can cost money or break deploys
+/infra/                @Jigar-Jk
+/databricks.yml        @Jigar-Jk
+/databricks/           @Jigar-Jk
+/scripts/              @Jigar-Jk
+/.github/              @Jigar-Jk
+
+# Table definitions: applied changesets must never be edited
+/liquibase/            @Jigar-Jk

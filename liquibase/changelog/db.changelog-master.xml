@@ -55,7 +55,7 @@
     <!-- Part 9f: Bronze _batch_id and last-known-good inventory snapshots -->
     <include file="changes/014-bronze-batch-id-and-stale-snapshots.sql" relativeToChangelogFile="true"/>
 
-    <!-- Part 9g: streaming lag limits for the 30-minute schedule; oracle_cdc renamed sqlserver_cdc -->
+    <!-- Part 9g: streaming lag limits for the 30-minute schedule; CDC source named sqlserver_cdc -->
     <include file="changes/015-streaming-sla-and-sqlserver-cdc-name.sql" relativeToChangelogFile="true"/>
 
     <!--
@@ -81,6 +81,13 @@
     </changeSet>
     <changeSet id="gold-mart-logistics-kpi-daily" author="scm-platform-team" runOnChange="true">
         <sqlFile path="gold/06_mart_logistics_kpi_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <!-- Business-user directories with PII masked unless the reader is in pii_readers (infra/governance.tf) -->
+    <changeSet id="gold-vw-customer-directory" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/07_vw_customer_directory.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-carrier-directory" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/08_vw_carrier_directory.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
     </changeSet>
 
 </databaseChangeLog>

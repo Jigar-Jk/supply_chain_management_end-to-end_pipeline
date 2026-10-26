@@ -184,14 +184,14 @@ Azure Event Hubs is a fully managed, real-time distributed data streaming servic
   - **Event Hubs Namespace:** The root management and scoping container (e.g., `evhns-scm-platform-dev`). It provides a unique FQDN endpoint, network access controls, disaster recovery configuration, and allocated capacity (Throughput Units).
   - **Event Hub:** The specific topic/channel inside the namespace (e.g., `gps-events`). It is where producers send events and from which consumers read.
 - **Producer vs. Consumer:**
-  - **Producers:** Upstream applications or devices that publish telemetry (e.g., in-vehicle GPS trackers, yard RFID gateways, and Debezium Oracle CDC connectors).
+  - **Producers:** Upstream applications or devices that publish telemetry (e.g., in-vehicle GPS trackers, yard RFID gateways, and Debezium SQL Server CDC connectors).
   - **Consumers:** Downstream streaming engines (e.g., Azure Databricks Spark Structured Streaming jobs) that connect via consumer groups, reading partition offsets sequentially without deleting data.
 
 ### Purpose of the `gps-events` Event Hub:
 The `gps-events` hub serves as the ingestion buffer for all streaming telemetry across the supply chain network:
 - Periodic GPS coordinate pings, vehicle speed, odometer readings, and route progression.
 - Container environmental telemetry (cold-chain temperature, humidity, vibration sensors).
-- Inbound change event envelopes from the Debezium Oracle CDC pipeline.
+- Inbound change event envelopes from the Debezium SQL Server CDC pipeline.
 
 ### Why 8 Partitions are Configured (`partition_count = 8`):
 - **Parallelism & Concurrency:** Partitions are the primary unit of throughput and consumer concurrency. In Spark Structured Streaming, each partition maps to an independent Spark task/executor. Having 8 partitions enables up to 8 Spark cores to read and process telemetry in parallel.
@@ -207,7 +207,7 @@ The `gps-events` hub serves as the ingestion buffer for all streaming telemetry 
 ```
 [In-Vehicle GPS / RFID Sensors]  ──┐
                                   ├──> [Event Hub: gps-events] ──> [Databricks Structured Streaming] ──> [Bronze Delta]
-[Oracle ERP (via Debezium CDC)] ──┘
+[SQL Server OMS (Debezium CDC)] ──┘
 ```
 
 > **Deployment Status:** **`DEPLOYED`**. Defined in `eventhub.tf` and deployed to Azure via `terraform apply`.
