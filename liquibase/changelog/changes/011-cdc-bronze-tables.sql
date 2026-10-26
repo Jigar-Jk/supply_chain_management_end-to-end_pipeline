@@ -10,7 +10,6 @@
 -- so Bronze never breaks when a source column is added. Silver applies each table's schema
 -- and keeps the highest source_position per key.
 -- Columns match scm_platform/stream_cdc_events.py exactly.
--- Substitution: SQL Server instead of the charter's Oracle (same log-based CDC; LSN in place of SCN).
 -- Author: scm-platform-team
 -- ============================================================================
 

@@ -55,7 +55,7 @@
     <!-- Part 9f: Bronze _batch_id and last-known-good inventory snapshots -->
     <include file="changes/014-bronze-batch-id-and-stale-snapshots.sql" relativeToChangelogFile="true"/>
 
-    <!-- Part 9g: streaming lag limits for the 30-minute schedule; oracle_cdc renamed sqlserver_cdc -->
+    <!-- Part 9g: streaming lag limits for the 30-minute schedule; CDC source named sqlserver_cdc -->
     <include file="changes/015-streaming-sla-and-sqlserver-cdc-name.sql" relativeToChangelogFile="true"/>
 
     <!--

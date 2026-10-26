@@ -32,7 +32,7 @@ The platform is designed to ingest multi-modal supply chain datasets through fou
 ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
 │   1. REST API   │       │ 2. Batch Files  │       │     3. CDC      │       │  4. Streaming   │
 ├─────────────────┤       ├─────────────────┤       ├─────────────────┤       ├─────────────────┤
-│ Carrier Tracking│       │ Warehouse WMS   │       │ Oracle ERP      │       │ GPS Trackers &  │
+│ Carrier Tracking│       │ Warehouse WMS   │       │ SQL Server OMS  │       │ GPS Trackers &  │
 │ Weather Updates │       │ Inventory Dumps │       │ Order Changes   │       │ RFID Scanners   │
 │                 │       │ (NDJSON files)  │       │ (Debezium)      │       │                 │
 └────────┬────────┘       └────────┬────────┘       └────────┬────────┘       └────────┬────────┘
@@ -48,7 +48,7 @@ The platform is designed to ingest multi-modal supply chain datasets through fou
    - **Sources:** Warehouse Management Systems (WMS) batch extracts and daily inventory status snapshots formatted as NDJSON or CSV.
    - **Pattern:** File drops to ADLS Gen2 landing containers, auto-detected and schema-inferred via Auto Loader into Bronze.
 3. **Change Data Capture (CDC) (`PLANNED`):**
-   - **Sources:** Transactional relational databases (e.g., Oracle ERP order tables).
+   - **Sources:** Transactional relational databases (the SQL Server OMS order-line and inventory tables).
    - **Pattern:** Streamed row-level insert, update, and delete events captured via Debezium into Azure Event Hubs, then processed via Structured Streaming into Bronze.
 4. **Real-Time Streaming (`PLANNED`):**
    - **Sources:** High-frequency IoT sensors, container GPS beacons, and temperature/humidity trackers.

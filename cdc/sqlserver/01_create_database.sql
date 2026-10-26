@@ -1,4 +1,4 @@
--- 01_create_database.sql - SQL Server OMS source for CDC (stand-in for the charter's Oracle OMS)
+-- 01_create_database.sql - SQL Server OMS source for CDC
 -- Run as an admin on the DEFAULT instance (MSSQLSERVER).
 --
 -- Primary keys: Debezium uses them as the Kafka message key, so every change to one row lands

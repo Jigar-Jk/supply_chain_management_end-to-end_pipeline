@@ -165,7 +165,7 @@ terraform -chdir=infra plan
 ## Step 3 — Azure Event Hub Foundation
 
 ### Objective
-Define the Azure Event Hubs Namespace and the foundational `gps-events` Event Hub required to ingest real-time IoT/GPS telemetry and Oracle CDC events into the lakehouse streaming pipeline.
+Define the Azure Event Hubs Namespace and the foundational `gps-events` Event Hub required to ingest real-time IoT/GPS telemetry and SQL Server CDC events into the lakehouse streaming pipeline.
 
 ### Why We Changed It
 - **Real-Time Streaming Broker:** Telemetry from in-transit vehicles and IoT asset sensors requires a decoupled, high-throughput message ingestion tier that buffers spikes in incoming traffic.
@@ -232,7 +232,7 @@ terraform -chdir=infra plan
 Define the centralized secret-management foundation for the project using Azure Key Vault, securing the infrastructure layer for future storage of API keys, database credentials, Event Hub connection strings, and service principal secrets — without storing any actual secret values in code.
 
 ### Why We Changed It
-- **Zero Hardcoded Secrets:** Supply chain integrations require credentials for carrier APIs, Event Hub endpoints, Oracle CDC connections, and Databricks service principals. Storing these directly in Terraform files, environment variables, or Git is a critical security vulnerability. Key Vault provides a centralized, encrypted, access-controlled vault.
+- **Zero Hardcoded Secrets:** Supply chain integrations require credentials for carrier APIs, Event Hub endpoints, SQL Server CDC connections, and Databricks service principals. Storing these directly in Terraform files, environment variables, or Git is a critical security vulnerability. Key Vault provides a centralized, encrypted, access-controlled vault.
 - **Databricks Integration Path:** In future steps, Azure Key Vault will back a Databricks secret scope, enabling notebooks and jobs to securely retrieve credentials at runtime via `dbutils.secrets.get()` without exposing values in code.
 - **RBAC Authorization Model:** Using `rbac_authorization_enabled = true` enables Azure Role-Based Access Control for vault operations instead of legacy vault access policies, aligning with modern Azure security best practices and simplifying identity management.
 - **Dev Environment Settings:** `soft_delete_retention_days = 7` and `purge_protection_enabled = false` provide a lightweight safety net appropriate for a development tier without the operational overhead of long retention windows.
