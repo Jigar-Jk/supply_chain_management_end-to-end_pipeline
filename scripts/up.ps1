@@ -112,6 +112,11 @@ if ($ghReady) {
 $env:DATABRICKS_HOST = $hostUrl
 $env:DATABRICKS_AUTH_TYPE = "azure-cli"
 Remove-Item Env:DATABRICKS_CONFIG_PROFILE -ErrorAction SilentlyContinue
+# An empty CLI config for this window: ~/.databrickscfg can hold a default_profile pointing at an
+# earlier, already destroyed workspace, which the CLI would use instead of DATABRICKS_HOST.
+$cliConfig = Join-Path $env:TEMP "scm-session.databrickscfg"
+Set-Content -Path $cliConfig -Value "" -Encoding ascii
+$env:DATABRICKS_CONFIG_FILE = $cliConfig
 
 # ------------------------------------------------------------------ 5. tables
 Step "Creating the tables in dev, qa and prod"
@@ -158,5 +163,5 @@ try {
 Step "Ready"
 Write-Host "    Workspace : $hostUrl"
 Write-Host "    Run       : databricks bundle run -t $Target scm_daily_pipeline   (in this window)"
-Write-Host "    In another window, first:  `$env:DATABRICKS_HOST='$hostUrl'; `$env:DATABRICKS_AUTH_TYPE='azure-cli'"
+Write-Host "    In another window, first:  `$env:DATABRICKS_HOST='$hostUrl'; `$env:DATABRICKS_AUTH_TYPE='azure-cli'; `$env:DATABRICKS_CONFIG_FILE='$cliConfig'"
 Write-Host "    Finish    : .\scripts\down.ps1   (billing continues until then)" -ForegroundColor Yellow

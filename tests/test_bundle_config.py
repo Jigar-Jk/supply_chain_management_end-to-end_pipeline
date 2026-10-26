@@ -144,6 +144,20 @@ class TestBundleConfig(unittest.TestCase):
         for name, target in self.bundle["targets"].items():
             self.assertEqual(target["variables"]["catalog"], f"scm_platform_{name}")
 
+    def test_shared_unity_catalog_objects_are_not_in_the_bundle(self):
+        """Dev is deployed by each developer and by CD; an object only job names keep apart (a volume, a
+        table) would be created twice in the same catalog. Such objects belong to Terraform."""
+        for f in [BUNDLE, *RESOURCES]:
+            kinds = set((load(f).get("resources") or {})) - {"jobs"}
+            self.assertFalse(kinds, f"{f.name}: {sorted(kinds)} - declare these in infra/ instead")
+        tf = (ROOT / "infra" / "unity_catalog.tf").read_text(encoding="utf-8")
+        self.assertIn('resource "databricks_volume" "checkpoints"', tf)
+        for _, task, _ in tasks():
+            params = (task.get("python_wheel_task") or {}).get("parameters", [])
+            if "--checkpoint-root" in params:
+                self.assertTrue(params[params.index("--checkpoint-root") + 1].startswith(
+                    "/Volumes/${var.catalog}/ops/checkpoints/"), task["task_key"])
+
     def test_prod_runs_as_the_pipeline_service_principal(self):
         """Prod is written only by scm-pipeline, whoever deploys it; dev runs as the developer."""
         targets = self.bundle["targets"]
