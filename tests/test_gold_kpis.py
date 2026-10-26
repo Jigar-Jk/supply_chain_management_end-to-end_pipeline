@@ -36,6 +36,7 @@ except ImportError:
     PYSPARK_AVAILABLE = False
 
 if PYSPARK_AVAILABLE:
+    from local.preview.sql_local import localize_sql
     from scm_platform.ingest_bronze import DATASET_SCHEMAS
     from scm_platform.stream_gps_events import dedup_events, split_events
     from tests.test_stream_gps_events import kafka_frame
@@ -67,8 +68,7 @@ PCT_TOLERANCE = 0.006   # Spark rounds HALF_UP, Python rounds half-to-even
 
 def localize(sql: str) -> str:
     """Make deployed Unity Catalog SQL runnable on local Spark (mechanical rewrites only)."""
-    sql = re.sub(r"CREATE OR REPLACE (MATERIALIZED )?VIEW", "CREATE OR REPLACE TEMP VIEW", sql)
-    return re.sub(r"\b(silver|gold)\.", "", sql)
+    return localize_sql(sql)
 
 
 def _clean_after_injection(clean_records, key_fn, manifest, manifest_key_fn):
