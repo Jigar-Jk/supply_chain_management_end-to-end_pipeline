@@ -98,7 +98,7 @@ late-master-data lines; and the missing-WMS-night scenario.
 | Schema management | Liquibase (Bronze/Silver tables and Gold views as versioned changesets) |
 | Deployment | Databricks Asset Bundles (4 jobs × dev / qa / prod), Python wheel (`scm_platform`) |
 | Infrastructure | Terraform (resource group, ADLS Gen2, Event Hubs, Key Vault, Databricks, Unity Catalog) |
-| CI | GitHub Actions: ruff lint → 238 tests → wheel build |
+| CI / CD | GitHub Actions. CI on every PR: ruff lint → tests → wheel build. CD by hand: dev → qa → approval → prod |
 
 ## Repository layout
 
@@ -164,13 +164,38 @@ databricks bundle run      -t dev scm_daily_pipeline
 | `scm_reprocess` | every 2 h | Replays pending quarantine rows |
 | `scm_streaming` | every 30 min | Drains GPS and CDC events into Bronze (no cluster running 24/7) |
 
+### CD: dev → qa → approval → prod
+
+[.github/workflows/cd.yml](.github/workflows/cd.yml), started by hand (Actions → CD → Run workflow), because
+the workspace only exists during an Azure session:
+
+```
+build   lint, bundle validate for dev, qa and prod
+dev     migrations → bundle deploy → daily pipeline run (integration test; optional)
+qa      migrations → bundle deploy → prod migration plan (dry-run), to read before approving
+prod    waits for a required reviewer; main branch only → migrations → bundle deploy
+```
+
+- **Login:** every job is the `scm-pipeline` service principal (OAuth client id and secret). Prod jobs
+  also run as it (`run_as` in `databricks.yml`), whoever deploys.
+- **Migrations:** [scripts/apply_migrations.py](scripts/apply_migrations.py) keeps a register per
+  catalog (`ops.schema_changelog`, like Liquibase's `DATABASECHANGELOG`). Only new changesets run, and
+  an edited applied changeset stops the run before anything changes.
+- **Session values:** `scripts/up.ps1` stores the workspace URL, ids and the OAuth secret in GitHub
+  (the secret goes from Terraform straight to GitHub, never shown); `scripts/down.ps1` removes the
+  credentials again. The repo is public, so the URL and e-mail are secrets too: only secrets are
+  masked in Actions logs.
+- **Environments:** `dev`, `qa`, `prod` and the approval gate are code too:
+  [scripts/github_envs.ps1](scripts/github_envs.ps1) (one-time).
+
 ## Roadmap
 
 - [x] Ingestion (4 patterns), quality gate, Silver galaxy schema, Gold KPIs
 - [x] Quarantine lifecycle, Silver quality tests, SLA checks, DQ tiles
 - [x] Wheel packaging, Asset Bundle, CI on GitHub Actions
 - [ ] Failure scenarios: API retry with backoff, schema drift
-- [ ] Per-environment Terraform catalogs and Liquibase runs; CD (dev → qa → approval → prod)
+- [x] Per-environment Terraform catalogs and Liquibase runs; CD workflow (dev → qa → approval → prod)
+- [ ] First CD run on Azure
 - [ ] Cloud deployment, Genie space over Gold, demo evidence
 
 ## Documented substitutions

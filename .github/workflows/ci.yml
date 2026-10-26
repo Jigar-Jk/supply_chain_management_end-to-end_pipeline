@@ -1,5 +1,5 @@
 # CI: on every push to main and every pull request -> lint, all tests, build the wheel.
-# CD (bundle validate + deploy dev -> qa -> prod) is added in the cloud window, once the workspace exists.
+# CD (dev -> qa -> approval -> prod) is a separate, manually started workflow: cd.yml.
 name: CI
 
 on:

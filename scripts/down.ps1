@@ -5,7 +5,8 @@
 .DESCRIPTION
   1. Checks you are on the Azure for Students subscription.
   2. terraform destroy (asks you to type "yes").
-  3. Clears the local bundle cache (.databricks/bundle), which remembers the deleted workspace's jobs.
+  3. Clears the local bundle cache (.databricks/bundle), which remembers the deleted workspace's jobs,
+     and removes the deleted workspace's URL and CD secret from GitHub (CD then says "run up.ps1").
   4. Waits (up to 30 min) until Azure has also removed the Databricks managed resource group, so the
      next scripts/up.ps1 will not clash with it.
 
@@ -36,6 +37,17 @@ if ($LASTEXITCODE -ne 0) { throw "terraform destroy failed (exit code $LASTEXITC
 
 $bundleCache = Join-Path $repo ".databricks\bundle"
 if (Test-Path $bundleCache) { Remove-Item -Recurse -Force $bundleCache; Write-Host "    cleared the local bundle cache" }
+
+# The service principal and its secret are gone with the workspace; do not leave them in GitHub.
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+    Push-Location $repo
+    try {
+        foreach ($name in "DATABRICKS_HOST", "DATABRICKS_CLIENT_SECRET") {
+            gh secret delete $name *> $null
+            if ($LASTEXITCODE -eq 0) { Write-Host "    removed GitHub secret $name" }
+        }
+    } finally { Pop-Location }
+}
 
 $suffix = ([regex]::Match((Get-Content $tfvars -Raw), 'name_suffix\s*=\s*"([a-z0-9]+)"')).Groups[1].Value
 $managedRg = "rg-dbw-scm-platform-$suffix-managed"
