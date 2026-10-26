@@ -9,7 +9,7 @@ otherwise only fail on Azure, mid-session:
     depends_on points at real tasks        SQL files exist
     every ${var.x} is defined              SLA check runs before the daily pipeline
     qa / prod schedules are paused         clusters use Unity Catalog mode; failures e-mail someone
-    no secrets written into the YAML
+    no secrets written into the YAML       prod runs as the pipeline service principal
 
 Run locally with:
     python -m unittest tests.test_bundle_config -v
@@ -143,6 +143,13 @@ class TestBundleConfig(unittest.TestCase):
     def test_every_target_sets_its_catalog(self):
         for name, target in self.bundle["targets"].items():
             self.assertEqual(target["variables"]["catalog"], f"scm_platform_{name}")
+
+    def test_prod_runs_as_the_pipeline_service_principal(self):
+        """Prod is written only by scm-pipeline, whoever deploys it; dev runs as the developer."""
+        targets = self.bundle["targets"]
+        self.assertEqual(targets["prod"].get("run_as"), {"service_principal_name": "${var.pipeline_sp}"})
+        self.assertNotIn("run_as", targets["dev"])
+        self.assertNotIn("user_name", str(targets["prod"].get("run_as")))
 
     # ------------------------------------------------------------------ schedules and cost
 
