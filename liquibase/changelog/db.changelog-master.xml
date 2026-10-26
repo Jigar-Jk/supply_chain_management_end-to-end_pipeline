@@ -82,5 +82,12 @@
     <changeSet id="gold-mart-logistics-kpi-daily" author="scm-platform-team" runOnChange="true">
         <sqlFile path="gold/06_mart_logistics_kpi_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
     </changeSet>
+    <!-- Business-user directories with PII masked unless the reader is in pii_readers (infra/governance.tf) -->
+    <changeSet id="gold-vw-customer-directory" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/07_vw_customer_directory.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
+    <changeSet id="gold-vw-carrier-directory" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/08_vw_carrier_directory.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
 
 </databaseChangeLog>
