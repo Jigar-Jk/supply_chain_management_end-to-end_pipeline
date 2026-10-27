@@ -89,5 +89,9 @@
     <changeSet id="gold-vw-carrier-directory" author="scm-platform-team" runOnChange="true">
         <sqlFile path="gold/08_vw_carrier_directory.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
     </changeSet>
+    <!-- Carrier performance against the contracted OTIF target (Control Tower dashboard) -->
+    <changeSet id="gold-vw-otif-by-carrier-daily" author="scm-platform-team" runOnChange="true">
+        <sqlFile path="gold/09_vw_otif_by_carrier_daily.sql" relativeToChangelogFile="true" splitStatements="false" stripComments="true"/>
+    </changeSet>
 
 </databaseChangeLog>

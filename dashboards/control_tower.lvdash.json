@@ -45,20 +45,169 @@
             ]
         },
         {
-            "name": "quarantine",
-            "displayName": "Quarantined rows by feed and rule",
+            "name": "by_carrier",
+            "displayName": "OTIF by carrier vs contract (last 30 days)",
             "queryLines": [
-                "SELECT source_feed, failed_rule, status, count(*) AS rows ",
-                "FROM quarantine.records GROUP BY source_feed, failed_rule, status ORDER BY rows DESC"
+                "SELECT carrier_name, ",
+                "  sum(shipments_delivered) AS shipments, ",
+                "  round(100.0 * sum(otif_shipments) / nullif(sum(shipments_delivered), 0), 1) AS otif_pct, ",
+                "  max(contracted_otif_target) AS target_pct, ",
+                "  round(100.0 * sum(otif_shipments) / nullif(sum(shipments_delivered), 0) - max(contracted_otif_target), 1) AS gap_pct ",
+                "FROM gold.vw_otif_by_carrier_daily ",
+                "WHERE kpi_date > date_sub((SELECT max(kpi_date) FROM gold.vw_otif_by_carrier_daily), 30) ",
+                "GROUP BY carrier_name ORDER BY gap_pct"
+            ]
+        },
+        {
+            "name": "dq_volume",
+            "displayName": "DQ 1: volume vs quarantined (14 days)",
+            "queryLines": [
+                "WITH processed AS (\n",
+                "  SELECT 'orders'     AS source_feed, to_date(_ingest_timestamp) AS day, count(*) AS rows_processed FROM bronze.orders     GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'inventory',  to_date(_ingest_timestamp), count(*) FROM bronze.inventory  GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'shipments',  to_date(_ingest_timestamp), count(*) FROM bronze.shipments  GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'warehouses', to_date(_ingest_timestamp), count(*) FROM bronze.warehouses GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'products',   to_date(_ingest_timestamp), count(*) FROM bronze.products   GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'customers',  to_date(_ingest_timestamp), count(*) FROM bronze.customers  GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'carriers',   to_date(_ingest_timestamp), count(*) FROM bronze.carriers   GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'routes',     to_date(_ingest_timestamp), count(*) FROM bronze.routes     GROUP BY to_date(_ingest_timestamp)\n",
+                "  UNION ALL\n",
+                "  SELECT 'gps_events', to_date(_ingest_timestamp), count(*) FROM bronze.gps_events GROUP BY to_date(_ingest_timestamp)\n",
+                "),\n",
+                "quarantined AS (\n",
+                "  SELECT source_feed, to_date(ingested_at) AS day, count(*) AS rows_quarantined\n",
+                "  FROM quarantine.records\n",
+                "  GROUP BY source_feed, to_date(ingested_at)\n",
+                ")\n",
+                "SELECT\n",
+                "  p.day,\n",
+                "  p.source_feed,\n",
+                "  p.rows_processed,\n",
+                "  coalesce(q.rows_quarantined, 0)                                            AS rows_quarantined,\n",
+                "  round(100.0 * coalesce(q.rows_quarantined, 0) / nullif(p.rows_processed, 0), 2) AS quarantine_pct\n",
+                "FROM processed p\n",
+                "LEFT JOIN quarantined q ON q.source_feed = p.source_feed AND q.day = p.day\n",
+                "WHERE p.day >= date_sub(current_date(), 14)\n"
+            ]
+        },
+        {
+            "name": "dq_by_rule",
+            "displayName": "DQ 2: quarantine by rule",
+            "queryLines": [
+                "SELECT\n",
+                "  source_feed,\n",
+                "  failed_rule,\n",
+                "  status,\n",
+                "  count(*)              AS rows,\n",
+                "  min(ingested_at)      AS oldest,\n",
+                "  max(retry_count)      AS max_retries\n",
+                "FROM quarantine.records\n",
+                "GROUP BY source_feed, failed_rule, status\n"
+            ]
+        },
+        {
+            "name": "dq_reprocessing",
+            "displayName": "DQ 3: reprocessing success",
+            "queryLines": [
+                "WITH by_feed AS (\n",
+                "  SELECT\n",
+                "    source_feed,\n",
+                "    sum(CASE WHEN status = 'REPROCESSED' THEN 1 ELSE 0 END) AS reprocessed,\n",
+                "    sum(CASE WHEN status = 'REJECTED'    THEN 1 ELSE 0 END) AS rejected,\n",
+                "    sum(CASE WHEN status = 'PENDING'     THEN 1 ELSE 0 END) AS still_pending\n",
+                "  FROM quarantine.records\n",
+                "  GROUP BY source_feed\n",
+                "),\n",
+                "with_total AS (\n",
+                "  SELECT * FROM by_feed\n",
+                "  UNION ALL\n",
+                "  SELECT 'ALL', sum(reprocessed), sum(rejected), sum(still_pending) FROM by_feed\n",
+                ")\n",
+                "SELECT\n",
+                "  source_feed,\n",
+                "  reprocessed,\n",
+                "  rejected,\n",
+                "  still_pending,\n",
+                "  round(100.0 * reprocessed / nullif(reprocessed + rejected, 0), 2) AS reprocessing_success_pct\n",
+                "FROM with_total\n"
+            ]
+        },
+        {
+            "name": "dq_sla",
+            "displayName": "DQ 4: pipeline SLA status",
+            "queryLines": [
+                "WITH last_success AS (\n",
+                "  SELECT source_system, max(ended_at) AS last_success\n",
+                "  FROM ops.pipeline_run_log\n",
+                "  WHERE status = 'SUCCESS'\n",
+                "  GROUP BY source_system\n",
+                "),\n",
+                "recent_miss AS (\n",
+                "  SELECT source_system, max(ended_at) AS last_sla_miss, max_by(error_message, ended_at) AS miss_message\n",
+                "  FROM ops.pipeline_run_log\n",
+                "  WHERE status IN ('SLA_MISS', 'REJECTED_FILE') AND ended_at >= current_timestamp() - INTERVAL 24 HOURS\n",
+                "  GROUP BY source_system\n",
+                "),\n",
+                "lag AS (\n",
+                "  SELECT\n",
+                "    c.source_system,\n",
+                "    c.expected_by_time,\n",
+                "    c.max_lag_minutes,\n",
+                "    l.last_success,\n",
+                "    m.last_sla_miss,\n",
+                "    m.miss_message,\n",
+                "    CAST((unix_timestamp(current_timestamp()) - unix_timestamp(l.last_success)) / 60 AS INT) AS minutes_since_success\n",
+                "  FROM ops.sla_config c\n",
+                "  LEFT JOIN last_success l ON l.source_system = c.source_system\n",
+                "  LEFT JOIN recent_miss  m ON m.source_system = c.source_system\n",
+                ")\n",
+                "SELECT\n",
+                "  source_system,\n",
+                "  expected_by_time,\n",
+                "  max_lag_minutes,\n",
+                "  last_success,\n",
+                "  minutes_since_success,\n",
+                "  last_sla_miss,\n",
+                "  miss_message,\n",
+                "  CASE WHEN last_sla_miss IS NOT NULL\n",
+                "         OR last_success IS NULL\n",
+                "         OR minutes_since_success > 2 * max_lag_minutes THEN 'RED'\n",
+                "       WHEN minutes_since_success > max_lag_minutes     THEN 'AMBER'\n",
+                "       ELSE 'GREEN' END                                  AS sla_status\n",
+                "FROM lag\n"
             ]
         }
     ],
     "pages": [
         {
             "name": "overview",
-            "displayName": "Control Tower",
+            "displayName": "Operations",
             "pageType": "PAGE_TYPE_CANVAS",
             "layout": [
+                {
+                    "widget": {
+                        "name": "intro",
+                        "multilineTextboxSpec": {
+                            "lines": [
+                                "## Logistics Control Tower\n",
+                                "Delivery, order and stock KPIs from the Gold layer, refreshed by the daily pipeline (03:00 UTC). Percentages are weighted by volume. Targets shown in the titles are planning targets; carrier targets come from each carrier's contract.\n"
+                            ]
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 6,
+                        "height": 1
+                    }
+                },
                 {
                     "widget": {
                         "name": "otif",
@@ -83,18 +232,18 @@
                             "encodings": {
                                 "value": {
                                     "fieldName": "otif_pct",
-                                    "displayName": "OTIF %"
+                                    "displayName": "OTIF % (30 days) · target 95"
                                 }
                             },
                             "frame": {
                                 "showTitle": true,
-                                "title": "OTIF % (30 days)"
+                                "title": "OTIF % (30 days) · target 95"
                             }
                         }
                     },
                     "position": {
                         "x": 0,
-                        "y": 0,
+                        "y": 1,
                         "width": 2,
                         "height": 3
                     }
@@ -123,18 +272,18 @@
                             "encodings": {
                                 "value": {
                                     "fieldName": "fill_rate_pct",
-                                    "displayName": "Fill rate %"
+                                    "displayName": "Fill rate % (30 days) · target 98"
                                 }
                             },
                             "frame": {
                                 "showTitle": true,
-                                "title": "Fill rate % (30 days)"
+                                "title": "Fill rate % (30 days) · target 98"
                             }
                         }
                     },
                     "position": {
                         "x": 2,
-                        "y": 0,
+                        "y": 1,
                         "width": 2,
                         "height": 3
                     }
@@ -163,18 +312,18 @@
                             "encodings": {
                                 "value": {
                                     "fieldName": "stockout_rate_pct",
-                                    "displayName": "Stockout %"
+                                    "displayName": "Stockout % (last night) · max 2"
                                 }
                             },
                             "frame": {
                                 "showTitle": true,
-                                "title": "Stockout rate % (latest night)"
+                                "title": "Stockout % (last night) · max 2"
                             }
                         }
                     },
                     "position": {
                         "x": 4,
-                        "y": 0,
+                        "y": 1,
                         "width": 1,
                         "height": 3
                     }
@@ -203,7 +352,7 @@
                             "encodings": {
                                 "value": {
                                     "fieldName": "inventory_turnover",
-                                    "displayName": "Turnover"
+                                    "displayName": "Inventory turnover (x / year)"
                                 }
                             },
                             "frame": {
@@ -214,7 +363,7 @@
                     },
                     "position": {
                         "x": 5,
-                        "y": 0,
+                        "y": 1,
                         "width": 1,
                         "height": 3
                     }
@@ -268,7 +417,7 @@
                     },
                     "position": {
                         "x": 0,
-                        "y": 3,
+                        "y": 4,
                         "width": 3,
                         "height": 6
                     }
@@ -325,7 +474,81 @@
                     },
                     "position": {
                         "x": 3,
-                        "y": 3,
+                        "y": 4,
+                        "width": 3,
+                        "height": 6
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "carriers",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "by_carrier",
+                                    "fields": [
+                                        {
+                                            "name": "carrier_name",
+                                            "expression": "`carrier_name`"
+                                        },
+                                        {
+                                            "name": "shipments",
+                                            "expression": "`shipments`"
+                                        },
+                                        {
+                                            "name": "otif_pct",
+                                            "expression": "`otif_pct`"
+                                        },
+                                        {
+                                            "name": "target_pct",
+                                            "expression": "`target_pct`"
+                                        },
+                                        {
+                                            "name": "gap_pct",
+                                            "expression": "`gap_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "carrier_name",
+                                        "displayName": "Carrier"
+                                    },
+                                    {
+                                        "fieldName": "shipments",
+                                        "displayName": "Shipments"
+                                    },
+                                    {
+                                        "fieldName": "otif_pct",
+                                        "displayName": "OTIF %"
+                                    },
+                                    {
+                                        "fieldName": "target_pct",
+                                        "displayName": "Contract target %"
+                                    },
+                                    {
+                                        "fieldName": "gap_pct",
+                                        "displayName": "Gap (pts)"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Carriers vs contracted OTIF (30 days, worst first)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 10,
                         "width": 3,
                         "height": 6
                     }
@@ -398,20 +621,274 @@
                         }
                     },
                     "position": {
-                        "x": 0,
-                        "y": 9,
-                        "width": 4,
+                        "x": 3,
+                        "y": 10,
+                        "width": 3,
                         "height": 6
+                    }
+                }
+            ]
+        },
+        {
+            "name": "data_quality",
+            "displayName": "Data Quality",
+            "pageType": "PAGE_TYPE_CANVAS",
+            "layout": [
+                {
+                    "widget": {
+                        "name": "dq_intro",
+                        "multilineTextboxSpec": {
+                            "lines": [
+                                "## Data Quality\n",
+                                "Can the numbers be trusted? Rows that fail a quality rule are quarantined instead of reaching Gold, replayed when they can be fixed, and every source is checked against its SLA.\n"
+                            ]
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 6,
+                        "height": 1
                     }
                 },
                 {
                     "widget": {
-                        "name": "dq",
+                        "name": "sla",
                         "queries": [
                             {
                                 "name": "main_query",
                                 "query": {
-                                    "datasetName": "quarantine",
+                                    "datasetName": "dq_sla",
+                                    "fields": [
+                                        {
+                                            "name": "source_system",
+                                            "expression": "`source_system`"
+                                        },
+                                        {
+                                            "name": "sla_status",
+                                            "expression": "`sla_status`"
+                                        },
+                                        {
+                                            "name": "minutes_since_success",
+                                            "expression": "`minutes_since_success`"
+                                        },
+                                        {
+                                            "name": "max_lag_minutes",
+                                            "expression": "`max_lag_minutes`"
+                                        },
+                                        {
+                                            "name": "last_success",
+                                            "expression": "`last_success`"
+                                        },
+                                        {
+                                            "name": "miss_message",
+                                            "expression": "`miss_message`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "source_system",
+                                        "displayName": "Source"
+                                    },
+                                    {
+                                        "fieldName": "sla_status",
+                                        "displayName": "Status"
+                                    },
+                                    {
+                                        "fieldName": "minutes_since_success",
+                                        "displayName": "Minutes since success"
+                                    },
+                                    {
+                                        "fieldName": "max_lag_minutes",
+                                        "displayName": "Allowed lag (min)"
+                                    },
+                                    {
+                                        "fieldName": "last_success",
+                                        "displayName": "Last success"
+                                    },
+                                    {
+                                        "fieldName": "miss_message",
+                                        "displayName": "Last SLA miss"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Pipeline SLA status"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 1,
+                        "width": 6,
+                        "height": 4
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "volume",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "dq_volume",
+                                    "fields": [
+                                        {
+                                            "name": "day",
+                                            "expression": "`day`"
+                                        },
+                                        {
+                                            "name": "source_feed",
+                                            "expression": "`source_feed`"
+                                        },
+                                        {
+                                            "name": "rows_processed",
+                                            "expression": "`rows_processed`"
+                                        },
+                                        {
+                                            "name": "rows_quarantined",
+                                            "expression": "`rows_quarantined`"
+                                        },
+                                        {
+                                            "name": "quarantine_pct",
+                                            "expression": "`quarantine_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "day",
+                                        "displayName": "Day"
+                                    },
+                                    {
+                                        "fieldName": "source_feed",
+                                        "displayName": "Feed"
+                                    },
+                                    {
+                                        "fieldName": "rows_processed",
+                                        "displayName": "Rows in"
+                                    },
+                                    {
+                                        "fieldName": "rows_quarantined",
+                                        "displayName": "Quarantined"
+                                    },
+                                    {
+                                        "fieldName": "quarantine_pct",
+                                        "displayName": "Quarantine %"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Volume vs quarantined (14 days)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 5,
+                        "width": 3,
+                        "height": 7
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "reprocessing",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "dq_reprocessing",
+                                    "fields": [
+                                        {
+                                            "name": "source_feed",
+                                            "expression": "`source_feed`"
+                                        },
+                                        {
+                                            "name": "reprocessed",
+                                            "expression": "`reprocessed`"
+                                        },
+                                        {
+                                            "name": "rejected",
+                                            "expression": "`rejected`"
+                                        },
+                                        {
+                                            "name": "still_pending",
+                                            "expression": "`still_pending`"
+                                        },
+                                        {
+                                            "name": "reprocessing_success_pct",
+                                            "expression": "`reprocessing_success_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "source_feed",
+                                        "displayName": "Feed"
+                                    },
+                                    {
+                                        "fieldName": "reprocessed",
+                                        "displayName": "Reprocessed"
+                                    },
+                                    {
+                                        "fieldName": "rejected",
+                                        "displayName": "Rejected"
+                                    },
+                                    {
+                                        "fieldName": "still_pending",
+                                        "displayName": "Pending"
+                                    },
+                                    {
+                                        "fieldName": "reprocessing_success_pct",
+                                        "displayName": "Success %"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Reprocessing success"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 3,
+                        "y": 5,
+                        "width": 3,
+                        "height": 7
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "by_rule",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "dq_by_rule",
                                     "fields": [
                                         {
                                             "name": "source_feed",
@@ -428,6 +905,10 @@
                                         {
                                             "name": "rows",
                                             "expression": "`rows`"
+                                        },
+                                        {
+                                            "name": "max_retries",
+                                            "expression": "`max_retries`"
                                         }
                                     ],
                                     "disaggregated": true
@@ -454,20 +935,24 @@
                                     {
                                         "fieldName": "rows",
                                         "displayName": "Rows"
+                                    },
+                                    {
+                                        "fieldName": "max_retries",
+                                        "displayName": "Max retries"
                                     }
                                 ]
                             },
                             "frame": {
                                 "showTitle": true,
-                                "title": "Data quality: quarantined rows"
+                                "title": "Quarantine by rule"
                             }
                         }
                     },
                     "position": {
-                        "x": 4,
-                        "y": 9,
-                        "width": 2,
-                        "height": 6
+                        "x": 0,
+                        "y": 12,
+                        "width": 6,
+                        "height": 7
                     }
                 }
             ]

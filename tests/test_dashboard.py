@@ -28,7 +28,8 @@ class TestDashboard(unittest.TestCase):
     def setUpClass(cls):
         cls.dash = json.loads(DASHBOARD.read_text(encoding="utf-8"))
         cls.datasets = {d["name"]: " ".join(d["queryLines"]) for d in cls.dash["datasets"]}
-        cls.widgets = [item["widget"] for page in cls.dash["pages"] for item in page["layout"]]
+        cls.all_widgets = [item["widget"] for page in cls.dash["pages"] for item in page["layout"]]
+        cls.widgets = [w for w in cls.all_widgets if "queries" in w]        # charts and tables; the rest are text
         cls.resource = yaml.safe_load(RESOURCE.read_text(encoding="utf-8"))["resources"]["dashboards"]["control_tower"]
 
     def test_every_widget_reads_an_existing_dataset(self):
@@ -74,8 +75,29 @@ class TestDashboard(unittest.TestCase):
     def test_viewers_query_with_their_own_rights(self):
         self.assertIs(self.resource["embed_credentials"], False, "grants and PII masking must apply to viewers")
 
+    def test_two_pages_operations_and_data_quality(self):
+        self.assertEqual([p["displayName"] for p in self.dash["pages"]], ["Operations", "Data Quality"])
+        for page in self.dash["pages"]:
+            first = page["layout"][0]["widget"]
+            self.assertIn("multilineTextboxSpec", first, f"{page['name']}: starts with a title text box")
+
+    def test_data_quality_page_runs_the_tested_tile_sql(self):
+        """The DQ tiles are tested in tests/test_dq_tiles.py; the dashboard must run exactly that SQL."""
+        def norm(text):
+            lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
+            return " ".join(" ".join(lines).split())
+        for name, tile in [("dq_volume", "01_volume_vs_quarantined"), ("dq_by_rule", "02_quarantine_by_rule"),
+                           ("dq_reprocessing", "03_reprocessing_success_rate"), ("dq_sla", "04_pipeline_sla_status")]:
+            sql = (ROOT / "dashboards" / "dq" / f"{tile}.sql").read_text(encoding="utf-8")
+            self.assertEqual(" ".join(self.datasets[name].split()), norm(sql), name)
+
+    def test_carrier_table_reads_gold_only(self):
+        self.assertIn("FROM gold.vw_otif_by_carrier_daily", self.datasets["by_carrier"])
+        for name in ("headline", "daily", "by_warehouse", "delay_risk", "by_carrier"):
+            self.assertNotRegex(self.datasets[name], r"(silver|bronze)\.", f"{name}: business users can only read Gold")
+
     def test_widget_names_are_unique_and_fit_the_grid(self):
-        names = [w["name"] for w in self.widgets]
+        names = [w["name"] for w in self.all_widgets]
         self.assertEqual(len(names), len(set(names)))
         for page in self.dash["pages"]:
             for item in page["layout"]:
