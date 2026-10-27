@@ -1,0 +1,11 @@
+# AI/BI dashboard over Gold, deployed with the jobs: CD takes it dev -> qa -> prod.
+# Queries name only schema.table; dataset_catalog points them at this environment's catalog.
+# embed_credentials false: every viewer queries with their own rights, so grants and PII masking apply.
+resources:
+  dashboards:
+    control_tower:
+      display_name: "Logistics Control Tower"
+      file_path: ../../dashboards/control_tower.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalog}
+      embed_credentials: false

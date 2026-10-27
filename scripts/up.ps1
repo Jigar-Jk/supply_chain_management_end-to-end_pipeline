@@ -163,5 +163,5 @@ try {
 Step "Ready"
 Write-Host "    Workspace : $hostUrl"
 Write-Host "    Run       : databricks bundle run -t $Target scm_daily_pipeline   (in this window)"
-Write-Host "    In another window, first:  `$env:DATABRICKS_HOST='$hostUrl'; `$env:DATABRICKS_AUTH_TYPE='azure-cli'; `$env:DATABRICKS_CONFIG_FILE='$cliConfig'"
+Write-Host "    In another window, first:  . .\scripts\session_env.ps1"
 Write-Host "    Finish    : .\scripts\down.ps1   (billing continues until then)" -ForegroundColor Yellow
