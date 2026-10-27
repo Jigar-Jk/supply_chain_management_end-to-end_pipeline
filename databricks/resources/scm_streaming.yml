@@ -2,15 +2,10 @@
 # Every 30 minutes each stream drains what is waiting (--available-now) and stops, so no cluster runs 24/7.
 # The two tasks have no depends_on: they run in parallel on the same cluster, each with its own checkpoint.
 # The Event Hubs connection string comes from a secret scope, never from this file.
+# The checkpoint volume /Volumes/<catalog>/ops/checkpoints is created by Terraform (infra/unity_catalog.tf),
+# not here: in dev, every developer and CD deploy their own copy of this bundle, and all of them use
+# the one volume of the catalog.
 resources:
-  volumes:
-    checkpoints:
-      catalog_name: ${var.catalog}
-      schema_name: ops
-      name: checkpoints
-      volume_type: MANAGED
-      comment: "Structured Streaming checkpoints (committed Kafka offsets) for the GPS and CDC streams"
-
   jobs:
     scm_streaming:
       name: "[${bundle.target}] scm_streaming"

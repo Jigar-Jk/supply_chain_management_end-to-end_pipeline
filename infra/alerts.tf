@@ -37,3 +37,25 @@ resource "databricks_alert" "quarantine_rate" {
     }
   }
 }
+
+# The quarantine_rate_alert task evaluates the alert as the job's identity: scm-pipeline under CD (and
+# always in prod, run_as). The deploying user owns query and alert, so the pipeline needs CAN_RUN on both.
+resource "databricks_permissions" "quarantine_rate_query" {
+  for_each     = local.catalogs
+  sql_query_id = databricks_query.quarantine_rate[each.key].id
+
+  access_control {
+    service_principal_name = databricks_service_principal.pipeline.application_id
+    permission_level       = "CAN_RUN"
+  }
+}
+
+resource "databricks_permissions" "quarantine_rate_alert" {
+  for_each     = local.catalogs
+  sql_alert_id = databricks_alert.quarantine_rate[each.key].id
+
+  access_control {
+    service_principal_name = databricks_service_principal.pipeline.application_id
+    permission_level       = "CAN_RUN"
+  }
+}

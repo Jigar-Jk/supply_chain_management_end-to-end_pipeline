@@ -65,3 +65,15 @@ resource "databricks_schema" "medallion" {
   comment       = local.schemas[each.value.schema]
   force_destroy = true
 }
+
+# Structured Streaming checkpoints (committed Kafka offsets) of the scm_streaming job. Here, not in the
+# bundle: in dev each developer and CD deploy their own copy of the bundle, and a volume declared in
+# it would be created twice in the same catalog (RESOURCE_ALREADY_EXISTS).
+resource "databricks_volume" "checkpoints" {
+  for_each     = local.catalogs
+  catalog_name = databricks_catalog.env[each.key].name
+  schema_name  = databricks_schema.medallion["${each.key}.ops"].name
+  name         = "checkpoints"
+  volume_type  = "MANAGED"
+  comment      = "Structured Streaming checkpoints (committed Kafka offsets) for the GPS and CDC streams"
+}

@@ -144,6 +144,15 @@ class TestGrantsAsCode(unittest.TestCase):
         for location in ("rejected", "managed"):
             self.assertNotIn(f'locations["{location}"]', text)
 
+    def test_pipeline_may_run_the_quarantine_alert(self):
+        """The daily job evaluates the alert as scm-pipeline; without CAN_RUN the task cannot see it."""
+        text = re.sub(r"#.*", "", (GOVERNANCE_TF.parent / "alerts.tf").read_text(encoding="utf-8"))
+        perms = dict(blocks(text, r'resource "databricks_permissions" "(\w+)" \{'))
+        for name, target in [("quarantine_rate_query", "sql_query_id"), ("quarantine_rate_alert", "sql_alert_id")]:
+            self.assertIn(target, perms[name])
+            self.assertIn("databricks_service_principal.pipeline.application_id", perms[name])
+            self.assertIn('"CAN_RUN"', perms[name])
+
     def test_cd_secret_is_never_printed(self):
         outputs = (GOVERNANCE_TF.parent / "outputs.tf").read_text(encoding="utf-8")
         body = dict(blocks(outputs, r'output "(\w+)" \{'))["pipeline_client_secret"]
