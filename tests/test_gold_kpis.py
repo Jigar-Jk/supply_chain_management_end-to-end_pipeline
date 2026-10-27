@@ -155,7 +155,8 @@ class TestGoldKpis(unittest.TestCase):
             spark.sql(localize(path.read_text(encoding="utf-8")))
         cls.views = {name: spark.table(name).collect() for name in (
             "vw_otif_daily", "vw_fill_rate_daily", "vw_stockout_rate_daily",
-            "vw_inventory_turnover_daily", "vw_delivery_delay_risk", "mart_logistics_kpi_daily")}
+            "vw_inventory_turnover_daily", "vw_delivery_delay_risk", "mart_logistics_kpi_daily",
+            "vw_otif_by_carrier_daily")}
 
         # ------------------------------------------------------------- independent clean records
         clean_lines = list(generate_order_lines(keys, ORDERS, seed=42, bad_rate=0.0, assortment_size=SKUS))
@@ -223,6 +224,28 @@ class TestGoldKpis(unittest.TestCase):
                              (n, on_time, in_full, otif), key)
             self.assertPct(r.otif_pct, 100 * otif / n, key)
             self.assertPct(r.on_time_pct, 100 * on_time / n, key)
+
+    def test_otif_by_carrier_matches_independent_calculation(self):
+        expected = defaultdict(lambda: [0, 0])
+        for s in self.shipments.values():
+            if s["shipment_status"] != "DELIVERED":
+                continue
+            otif = s["actual_delivery_time_utc"] <= s["planned_delivery_time_utc"] and \
+                s["shipped_quantity"] >= s["ordered_quantity"]
+            e = expected[(s["carrier_id"], s["actual_delivery_time_utc"][:10])]
+            e[0] += 1; e[1] += otif
+        got = {(r.carrier_id, r.kpi_date.isoformat()): r for r in self.views["vw_otif_by_carrier_daily"]}
+        self.assertEqual(set(got), set(expected))
+        for key, (n, otif) in expected.items():
+            self.assertEqual((got[key].shipments_delivered, got[key].otif_shipments), (n, otif), key)
+            self.assertPct(got[key].otif_pct, 100 * otif / n, key)
+            self.assertIsNotNone(got[key].contracted_otif_target, key)
+
+    def test_carrier_and_warehouse_otif_count_the_same_shipments(self):
+        by_carrier = self.views["vw_otif_by_carrier_daily"]
+        by_warehouse = self.views["vw_otif_daily"]
+        self.assertEqual(sum(r.shipments_delivered for r in by_carrier), sum(r.shipments_delivered for r in by_warehouse))
+        self.assertEqual(sum(r.otif_shipments for r in by_carrier), sum(r.otif_shipments for r in by_warehouse))
 
     # ------------------------------------------------------------------ KPI 2: fill rate
 
