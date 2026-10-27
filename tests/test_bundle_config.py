@@ -148,7 +148,7 @@ class TestBundleConfig(unittest.TestCase):
         """Dev is deployed by each developer and by CD; an object only job names keep apart (a volume, a
         table) would be created twice in the same catalog. Such objects belong to Terraform."""
         for f in [BUNDLE, *RESOURCES]:
-            kinds = set((load(f).get("resources") or {})) - {"jobs"}
+            kinds = set((load(f).get("resources") or {})) - {"jobs","dashboards"}
             self.assertFalse(kinds, f"{f.name}: {sorted(kinds)} - declare these in infra/ instead")
         tf = (ROOT / "infra" / "unity_catalog.tf").read_text(encoding="utf-8")
         self.assertIn('resource "databricks_volume" "checkpoints"', tf)

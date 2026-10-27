@@ -1,0 +1,476 @@
+{
+    "datasets": [
+        {
+            "name": "headline",
+            "displayName": "Headline KPIs (last 30 days)",
+            "queryLines": [
+                "WITH w AS (SELECT max(kpi_date) AS d FROM gold.vw_otif_daily) ",
+                "SELECT ",
+                "  (SELECT round(100.0 * sum(otif_shipments) / nullif(sum(shipments_delivered), 0), 1) FROM gold.vw_otif_daily, w WHERE kpi_date > date_sub(w.d, 30)) AS otif_pct, ",
+                "  (SELECT round(100.0 * sum(units_shipped) / nullif(sum(units_ordered), 0), 1) FROM gold.vw_fill_rate_daily, w WHERE kpi_date > date_sub(w.d, 30)) AS fill_rate_pct, ",
+                "  (SELECT round(100.0 * sum(stockout_skus) / nullif(sum(skus_stocked), 0), 1) FROM gold.vw_stockout_rate_daily WHERE kpi_date = (SELECT max(kpi_date) FROM gold.vw_stockout_rate_daily)) AS stockout_rate_pct, ",
+                "  (SELECT round(avg(inventory_turnover), 1) FROM gold.vw_inventory_turnover_daily WHERE kpi_date = (SELECT max(kpi_date) FROM gold.vw_inventory_turnover_daily)) AS inventory_turnover"
+            ]
+        },
+        {
+            "name": "daily",
+            "displayName": "OTIF and fill rate by day",
+            "queryLines": [
+                "SELECT o.kpi_date, ",
+                "  round(100.0 * sum(o.otif_shipments) / nullif(sum(o.shipments_delivered), 0), 1) AS otif_pct, ",
+                "  round(100.0 * sum(f.units_shipped) / nullif(sum(f.units_ordered), 0), 1) AS fill_rate_pct ",
+                "FROM gold.vw_otif_daily o ",
+                "LEFT JOIN gold.vw_fill_rate_daily f ON f.warehouse_id = o.warehouse_id AND f.kpi_date = o.kpi_date ",
+                "GROUP BY o.kpi_date ORDER BY o.kpi_date"
+            ]
+        },
+        {
+            "name": "by_warehouse",
+            "displayName": "OTIF by warehouse (last 30 days)",
+            "queryLines": [
+                "SELECT warehouse_name, ",
+                "  round(sum(shipments_delivered * otif_pct) / nullif(sum(shipments_delivered), 0), 1) AS otif_pct, ",
+                "  sum(shipments_delivered) AS shipments ",
+                "FROM gold.mart_logistics_kpi_daily ",
+                "WHERE kpi_date > date_sub((SELECT max(kpi_date) FROM gold.mart_logistics_kpi_daily), 30) AND shipments_delivered > 0 ",
+                "GROUP BY warehouse_name ORDER BY otif_pct LIMIT 15"
+            ]
+        },
+        {
+            "name": "delay_risk",
+            "displayName": "Shipments at high delay risk",
+            "queryLines": [
+                "SELECT shipment_id, carrier_name, warehouse_id, planned_delivery_time, delay_risk_score, risk_band ",
+                "FROM gold.vw_delivery_delay_risk WHERE risk_band = 'HIGH' ORDER BY delay_risk_score DESC LIMIT 50"
+            ]
+        },
+        {
+            "name": "quarantine",
+            "displayName": "Quarantined rows by feed and rule",
+            "queryLines": [
+                "SELECT source_feed, failed_rule, status, count(*) AS rows ",
+                "FROM quarantine.records GROUP BY source_feed, failed_rule, status ORDER BY rows DESC"
+            ]
+        }
+    ],
+    "pages": [
+        {
+            "name": "overview",
+            "displayName": "Control Tower",
+            "pageType": "PAGE_TYPE_CANVAS",
+            "layout": [
+                {
+                    "widget": {
+                        "name": "otif",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "headline",
+                                    "fields": [
+                                        {
+                                            "name": "otif_pct",
+                                            "expression": "`otif_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "counter",
+                            "encodings": {
+                                "value": {
+                                    "fieldName": "otif_pct",
+                                    "displayName": "OTIF %"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "OTIF % (30 days)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 2,
+                        "height": 3
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "fill",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "headline",
+                                    "fields": [
+                                        {
+                                            "name": "fill_rate_pct",
+                                            "expression": "`fill_rate_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "counter",
+                            "encodings": {
+                                "value": {
+                                    "fieldName": "fill_rate_pct",
+                                    "displayName": "Fill rate %"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Fill rate % (30 days)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 2,
+                        "y": 0,
+                        "width": 2,
+                        "height": 3
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "stockout",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "headline",
+                                    "fields": [
+                                        {
+                                            "name": "stockout_rate_pct",
+                                            "expression": "`stockout_rate_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "counter",
+                            "encodings": {
+                                "value": {
+                                    "fieldName": "stockout_rate_pct",
+                                    "displayName": "Stockout %"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Stockout rate % (latest night)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 4,
+                        "y": 0,
+                        "width": 1,
+                        "height": 3
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "turnover",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "headline",
+                                    "fields": [
+                                        {
+                                            "name": "inventory_turnover",
+                                            "expression": "`inventory_turnover`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "counter",
+                            "encodings": {
+                                "value": {
+                                    "fieldName": "inventory_turnover",
+                                    "displayName": "Turnover"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Inventory turnover (x / year)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 5,
+                        "y": 0,
+                        "width": 1,
+                        "height": 3
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "trend",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "daily",
+                                    "fields": [
+                                        {
+                                            "name": "kpi_date",
+                                            "expression": "`kpi_date`"
+                                        },
+                                        {
+                                            "name": "otif_pct",
+                                            "expression": "`otif_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 3,
+                            "widgetType": "line",
+                            "encodings": {
+                                "x": {
+                                    "fieldName": "kpi_date",
+                                    "scale": {
+                                        "type": "temporal"
+                                    },
+                                    "displayName": "Day"
+                                },
+                                "y": {
+                                    "fieldName": "otif_pct",
+                                    "scale": {
+                                        "type": "quantitative"
+                                    },
+                                    "displayName": "OTIF %"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "OTIF % by day"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 3,
+                        "width": 3,
+                        "height": 6
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "warehouses",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "by_warehouse",
+                                    "fields": [
+                                        {
+                                            "name": "warehouse_name",
+                                            "expression": "`warehouse_name`"
+                                        },
+                                        {
+                                            "name": "otif_pct",
+                                            "expression": "`otif_pct`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 3,
+                            "widgetType": "bar",
+                            "encodings": {
+                                "x": {
+                                    "fieldName": "otif_pct",
+                                    "scale": {
+                                        "type": "quantitative"
+                                    },
+                                    "displayName": "OTIF %"
+                                },
+                                "y": {
+                                    "fieldName": "warehouse_name",
+                                    "scale": {
+                                        "type": "categorical",
+                                        "sort": {
+                                            "by": "x"
+                                        }
+                                    },
+                                    "displayName": "Warehouse"
+                                }
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Lowest OTIF warehouses (30 days)"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 3,
+                        "y": 3,
+                        "width": 3,
+                        "height": 6
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "risk",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "delay_risk",
+                                    "fields": [
+                                        {
+                                            "name": "shipment_id",
+                                            "expression": "`shipment_id`"
+                                        },
+                                        {
+                                            "name": "carrier_name",
+                                            "expression": "`carrier_name`"
+                                        },
+                                        {
+                                            "name": "warehouse_id",
+                                            "expression": "`warehouse_id`"
+                                        },
+                                        {
+                                            "name": "planned_delivery_time",
+                                            "expression": "`planned_delivery_time`"
+                                        },
+                                        {
+                                            "name": "delay_risk_score",
+                                            "expression": "`delay_risk_score`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "shipment_id",
+                                        "displayName": "Shipment"
+                                    },
+                                    {
+                                        "fieldName": "carrier_name",
+                                        "displayName": "Carrier"
+                                    },
+                                    {
+                                        "fieldName": "warehouse_id",
+                                        "displayName": "Warehouse"
+                                    },
+                                    {
+                                        "fieldName": "planned_delivery_time",
+                                        "displayName": "Planned delivery"
+                                    },
+                                    {
+                                        "fieldName": "delay_risk_score",
+                                        "displayName": "Risk score"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "High delay-risk shipments"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 0,
+                        "y": 9,
+                        "width": 4,
+                        "height": 6
+                    }
+                },
+                {
+                    "widget": {
+                        "name": "dq",
+                        "queries": [
+                            {
+                                "name": "main_query",
+                                "query": {
+                                    "datasetName": "quarantine",
+                                    "fields": [
+                                        {
+                                            "name": "source_feed",
+                                            "expression": "`source_feed`"
+                                        },
+                                        {
+                                            "name": "failed_rule",
+                                            "expression": "`failed_rule`"
+                                        },
+                                        {
+                                            "name": "status",
+                                            "expression": "`status`"
+                                        },
+                                        {
+                                            "name": "rows",
+                                            "expression": "`rows`"
+                                        }
+                                    ],
+                                    "disaggregated": true
+                                }
+                            }
+                        ],
+                        "spec": {
+                            "version": 2,
+                            "widgetType": "table",
+                            "encodings": {
+                                "columns": [
+                                    {
+                                        "fieldName": "source_feed",
+                                        "displayName": "Feed"
+                                    },
+                                    {
+                                        "fieldName": "failed_rule",
+                                        "displayName": "Rule"
+                                    },
+                                    {
+                                        "fieldName": "status",
+                                        "displayName": "Status"
+                                    },
+                                    {
+                                        "fieldName": "rows",
+                                        "displayName": "Rows"
+                                    }
+                                ]
+                            },
+                            "frame": {
+                                "showTitle": true,
+                                "title": "Data quality: quarantined rows"
+                            }
+                        }
+                    },
+                    "position": {
+                        "x": 4,
+                        "y": 9,
+                        "width": 2,
+                        "height": 6
+                    }
+                }
+            ]
+        }
+    ]
+}
