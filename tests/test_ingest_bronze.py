@@ -8,17 +8,24 @@ Run with:
     python -m unittest tests.test_ingest_bronze -v
 """
 
+import csv
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
+
+from data_generators.generate_inventory import INVENTORY_COLUMNS, read_inventory_csv
 
 # Import module under test
 from scm_platform.ingest_bronze import (
+    CSV_OPTIONS,
     DATASET_SCHEMAS,
     IngestionConfig,
     PYSPARK_AVAILABLE,
     add_bronze_metadata,
     build_autoloader_stream,
     get_default_config,
+    get_inventory_schema,
     get_routes_schema,
     get_shipments_schema,
     get_weather_schema,
@@ -141,6 +148,35 @@ class TestIngestionConfig(unittest.TestCase):
             get_default_config("unknown_feed")
 
 
+@unittest.skipUnless(PYSPARK_AVAILABLE, "PySpark is required")
+class TestInventoryCsvOnSpark(unittest.TestCase):
+    """The generator's CSV, read by Spark with the Bronze schema and CSV_OPTIONS, gives the generator's rows."""
+
+    def test_values_land_in_their_columns_with_their_types(self):
+        from pyspark.sql import SparkSession
+
+        rows = [
+            {"warehouse_id": "WH-0001", "product_id": "SKU-1", "snapshot_date": "2026-10-12", "quantity_on_hand": 40,
+             "quantity_reserved": 10, "safety_stock": 15, "reorder_point": 25, "recorded_at": "2026-10-12T01:05:00Z"},
+            {"warehouse_id": None, "product_id": "SKU-2", "snapshot_date": "2026-10-12", "quantity_on_hand": -3,
+             "quantity_reserved": 0, "safety_stock": 1, "reorder_point": 2, "recorded_at": "2026-10-12T01:06:00Z"},
+            {"warehouse_id": 'WH, "Mumbai"', "product_id": "SKU-3", "snapshot_date": "2026-10-12",
+             "quantity_on_hand": 7, "quantity_reserved": None, "safety_stock": 1, "reorder_point": 2,
+             "recorded_at": "2026-10-12T01:07:00Z"},
+        ]
+        spark = SparkSession.builder.master("local[1]").appName("csv_contract").getOrCreate()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inventory_2026-10-12.csv"
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=INVENTORY_COLUMNS, lineterminator="\n")
+                w.writeheader()
+                w.writerows(rows)
+            self.assertEqual(list(read_inventory_csv(path)), rows)
+            options = {k: v for k, v in CSV_OPTIONS.items() if k != "pathGlobFilter"}
+            got = [r.asDict() for r in spark.read.options(**options).schema(get_inventory_schema()).csv(str(path)).collect()]
+        self.assertEqual(got, rows)       # quotes and commas inside a value, NULLs, negatives: all as written
+
+
 class TestStreamConstructionWithMock(unittest.TestCase):
     """Verify Auto Loader and Delta Lake streaming invocations using mocks."""
 
@@ -178,6 +214,31 @@ class TestStreamConstructionWithMock(unittest.TestCase):
         self.assertLessEqual(used, {"cloudFiles.format", "cloudFiles.schemaLocation", "cloudFiles.schemaEvolutionMode"})
         # Verify loaded from landing path
         mock_reader.load.assert_called_with("abfss://landing@sa/routes/")
+
+    def test_inventory_is_read_as_csv_with_header_and_rescue(self):
+        mock_spark, reader = MagicMock(), MagicMock()
+        mock_spark.readStream.format.return_value = reader
+        reader.option.return_value = reader
+        reader.schema.return_value = reader
+        reader.load.return_value.withColumn.return_value = MagicMock()
+
+        cfg = get_default_config("inventory", storage_account="sa", catalog="scm_platform_dev")
+        self.assertEqual(cfg.file_format, "csv")
+        build_autoloader_stream(mock_spark, cfg, MagicMock())
+        options = {c.args[0]: c.args[1] for c in reader.option.call_args_list}
+        self.assertEqual(options["cloudFiles.format"], "csv")
+        for key, value in {"header": "true", "sep": ",", "quote": '"', "escape": '"', "nullValue": "",
+                           "encoding": "UTF-8", "pathGlobFilter": "*.csv"}.items():
+            self.assertEqual(options.get(key), value, key)
+        self.assertEqual(options["rescuedDataColumn"], "_rescued_data")       # drift still goes to Silver's rule
+        self.assertEqual(options["cloudFiles.schemaEvolutionMode"], "rescue")
+        self.assertLessEqual({k for k in options if k.startswith("cloudFiles.")},
+                             {"cloudFiles.format", "cloudFiles.schemaLocation", "cloudFiles.schemaEvolutionMode"})
+
+    def test_every_other_feed_stays_ndjson(self):
+        for feed in DATASET_SCHEMAS:
+            if feed != "inventory":
+                self.assertEqual(get_default_config(feed).file_format, "json", feed)
 
     def test_start_bronze_stream_write(self):
         mock_stream_df = MagicMock()

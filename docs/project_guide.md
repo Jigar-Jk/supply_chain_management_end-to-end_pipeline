@@ -127,7 +127,7 @@ Every catalog has the same five schemas:
 | REST API | Routing service | OpenRouteService, real API, cached (`seed_api.py`, `normalize_api_data.py`). One real route; the other lanes are synthetic | `bronze.routes` |
 | REST API | Weather service | Open-Meteo, real API, hourly forecast, cached | `bronze.weather` |
 | REST API | Carrier tracking API | Mock carrier API (`services/carrier_api`) serving `generate_shipments.py` data, pulled by `scm-ingest-api` (see 2.6); uploaded as a file while the API step is off | `bronze.shipments` |
-| Batch file | WMS nightly stock file | `generate_inventory.py`, one NDJSON file per night | `bronze.inventory` |
+| Batch file | WMS nightly stock file | `generate_inventory.py`, one CSV file per night (header, comma, quoted where needed), as a WMS exports it | `bronze.inventory` |
 | Batch file | ERP / WMS / OMS master data | `generate_master_data.py` | `bronze.warehouses`, `products`, `customers`, `carriers` |
 | Batch file | OMS order file feed | `generate_orders.py` | `bronze.orders` |
 | CDC | Order management database | SQL Server `scm_oms` + `simulate_oms_changes.py`, Debezium → Kafka | `bronze.orders_cdc`, `inventory_cdc`, `cdc_dlq` |
@@ -151,6 +151,9 @@ Streaming checkpoints (GPS and CDC) live in a Unity Catalog volume:
 
 - **Only new files.** A checkpoint remembers which files were read, so a re-run never loads a file twice.
 - **Explicit schema.** The schema is given in `DATASET_SCHEMAS` in `ingest_bronze.py`; it is not inferred.
+- **Format per feed.** Every feed is NDJSON except the WMS stock file, which is CSV (`FEED_FORMATS`).
+  CSV is read with a header row, comma, double quotes around values holding a comma or a quote, an
+  empty cell as NULL and UTF-8 (`CSV_OPTIONS`); only `*.csv` files in the folder are picked up.
 - **Rescue mode.** A field that does not fit the schema (a new column or a wrong type) goes to
   `_rescued_data` instead of failing the row. Silver's schema-drift rule then catches it.
 - **One checkpoint per environment.** The checkpoint path contains the catalog name. Dev, qa and prod

@@ -145,9 +145,10 @@ if (-not $SkipData) {
     # With the carrier API on, the pipeline fetches shipments itself; uploading the file too would land them twice
     if ($carrierApi -ne "disabled") { $feeds = $feeds | Where-Object { $_ -ne "shipments" } }
     foreach ($feed in $feeds) {
+        $pattern = if ($feed -eq "inventory") { "*.csv" } else { "*.jsonl" }      # the WMS stock file is CSV
         for ($try = 1; ; $try++) {
             az storage blob upload-batch --account-name $storage --destination landing --destination-path $feed `
-                --source (Join-Path $repo "data\$feed") --pattern "*.jsonl" --auth-mode login --overwrite -o none 2>$null
+                --source (Join-Path $repo "data\$feed") --pattern $pattern --auth-mode login --overwrite -o none 2>$null
             if ($LASTEXITCODE -eq 0) { Write-Host "    uploaded $feed"; break }
             # A new role assignment can take a few minutes to become active
             if ($try -ge 10) { throw "Upload of $feed still failing after 10 tries." }

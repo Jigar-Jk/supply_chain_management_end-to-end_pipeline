@@ -27,6 +27,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import BinaryType, IntegerType, LongType, StringType, StructField, StructType, TimestampType
 
+from data_generators.generate_inventory import read_inventory_csv
 from data_generators.produce_gps import build_fleet, generate_messages
 from scm_platform.ingest_bronze import DATASET_SCHEMAS
 from scm_platform.stream_gps_events import dedup_events, split_events
@@ -59,6 +60,11 @@ def read_jsonl(path: Path):
         return [json.loads(line) for line in f if line.strip()]
 
 
+def read_feed_file(path: Path):
+    """Rows of one landing file: the WMS stock file is CSV, every other feed NDJSON."""
+    return list(read_inventory_csv(path)) if path.suffix == ".csv" else read_jsonl(path)
+
+
 class Run:
     """Holds the Spark session, the tables to publish, and the step log."""
 
@@ -71,10 +77,10 @@ class Run:
         self.ingest_ts = datetime.now(timezone.utc).replace(tzinfo=None)
 
     def bronze(self, feed: str, files):
-        """Generated JSONL file(s) -> Bronze DataFrame with the explicit feed schema + audit columns."""
+        """Generated file(s) -> Bronze DataFrame with the explicit feed schema + audit columns."""
         frames = []
         for path in files:
-            df = self.spark.createDataFrame(read_jsonl(path), schema=DATASET_SCHEMAS[feed]())
+            df = self.spark.createDataFrame(read_feed_file(path), schema=DATASET_SCHEMAS[feed]())
             frames.append(df.withColumn("_source_file", F.lit(f"data/{path.parent.name}/{path.name}")))
         df = frames[0]
         for extra in frames[1:]:
@@ -130,7 +136,7 @@ def main(dry_run: bool = False, simulate_missing_wms_night: bool = False) -> Non
     print(f"Batch {run.batch_id}: Bronze -> quality gate -> Silver -> Gold")
 
     # ------------------------------------------------------------------ Bronze
-    all_nights = sorted((DATA / "inventory").glob("inventory_*.jsonl"))
+    all_nights = sorted((DATA / "inventory").glob("inventory_*.csv"))
     last_night = date.fromisoformat(all_nights[-1].stem.split("_", 1)[1])
     inventory_files = all_nights[:-1] if simulate_missing_wms_night else all_nights
     if simulate_missing_wms_night:
