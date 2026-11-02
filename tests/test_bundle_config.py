@@ -86,6 +86,13 @@ class TestBundleConfig(unittest.TestCase):
                 self.assertEqual(wheel["package_name"], "scm_platform", (job, task["task_key"]))
                 self.assertIn(wheel["entry_point"], self.entry_points, (job, task["task_key"]))
 
+    def test_wheel_ships_every_sub_package(self):
+        """setuptools packages lists packages explicitly; a sub-package left out installs fine in CI
+        (tests import from the source tree) but fails on Databricks with ModuleNotFoundError."""
+        listed = set(tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["packages"])
+        on_disk = {".".join(p.parent.relative_to(ROOT).parts) for p in (ROOT / "scm_platform").rglob("__init__.py")}
+        self.assertEqual(listed, on_disk)
+
     def test_task_flags_are_accepted_by_the_command(self):
         for job, task, _ in tasks():
             if "python_wheel_task" not in task:

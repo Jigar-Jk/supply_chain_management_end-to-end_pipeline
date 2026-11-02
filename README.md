@@ -8,7 +8,7 @@ events (CDC) and truck GPS streams flow into a **medallion lakehouse** (Bronze �
 rows are quarantined, fixed or replayed, never silently dropped. The result is a set of trusted
 logistics KPIs: **OTIF, fill rate, stockout rate, inventory turnover and delivery-delay risk**.
 
-> **Status:** the full pipeline is built and tested locally (238 automated tests, CI green).
+> **Status:** the full pipeline is built and tested locally (357 automated tests, CI green) and deployed to Azure through CD.
 > The Azure deployment (Terraform, Databricks Asset Bundles) is written and validated offline,
 > and is deployed in a short cloud window before the demo.
 
@@ -105,6 +105,7 @@ late-master-data lines; and the missing-WMS-night scenario.
 ```
 scm_platform/        pipeline code, packaged as a wheel: Bronze ingestion, Silver transforms,
                      GPS + CDC streams, quarantine reprocessing, SLA checks
+  silver/            Silver layer by concern: quality gate, SCD, dimensions, CDC, facts, writer, pipeline
 data_generators/     synthetic data (master data, orders, inventory, shipments, GPS) and API seeding
 databricks/          bundle jobs (resources/) and the SQL they run (sql/)
 databricks.yml       Databricks Asset Bundle: variables, wheel artifact, dev / qa / prod targets
@@ -114,7 +115,7 @@ cdc/                 SQL Server CDC setup and the Debezium connector config
 local/               local runs: preview into SQL Server (preview/), Kafka + Debezium stack (streaming/)
 infra/               Terraform for Azure
 tests/               unit and Spark tests
-docs/                architecture, data model, implementation notes, decisions
+docs/                project guide, architecture, data model, CDC runbook, decisions (archive/: first notes)
 ```
 
 ## Run it locally
@@ -206,11 +207,11 @@ prod    waits for a required reviewer; main branch only → migrations → bundl
 
 ## Documentation
 
+- [docs/project_guide.md](docs/project_guide.md): the whole project part by part, with likely questions
 - [docs/architecture.md](docs/architecture.md): architecture diagrams
 - [docs/data_model.md](docs/data_model.md): ER diagrams and table notes
-- [docs/01-project-overview.md](docs/01-project-overview.md): business context and objectives
-- [docs/02-architecture.md](docs/02-architecture.md): component responsibilities
-- [docs/03-implementation.md](docs/03-implementation.md): implementation log
-- [docs/04-infrastructure.md](docs/04-infrastructure.md): Terraform deep-dive
-- [docs/05-data-flow.md](docs/05-data-flow.md): ingestion pathways
+- [docs/cdc.md](docs/cdc.md): CDC runbook
 - [docs/decisions.md](docs/decisions.md): architecture decision records
+- [docs/archive/](docs/archive/): the first build notes, kept for history
+
+Index of all pages: [docs/README.md](docs/README.md).

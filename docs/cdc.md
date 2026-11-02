@@ -90,7 +90,7 @@ All `docker compose` commands use `-f local/streaming/docker-compose.yml` (writt
 | 4 | Snapshot into Bronze | `dc run --rm cdc-stream`, then `dc run --rm cdc-stream-inspect` | Only `op r` rows; snapshot rows = source rows |
 | 5 | Live changes | `python -m data_generators.simulate_oms_changes --events 2000 --tps 20`, then `dc run --rm cdc-stream` and inspect again | `c` / `u` / `d` rows appear after the snapshot |
 | 6 | **Outage** | `docker stop scm-kafka-connect`, run the simulator again, `docker start scm-kafka-connect`, wait for `RUNNING`, then `dc run --rm cdc-stream` | Changes made during the outage arrive after the restart |
-| 7 | **Out-of-order replay** | `python -m local.streaming.replay_stale_cdc_event`, then `dc run --rm cdc-stream` | Prints the key plus stale vs newest status; Silver keeps the newest |
+| 7 | **Out-of-order replay** | `python -m local.streaming.replay_stale_cdc_event`, then `dc run --rm cdc-stream` | Prints the key plus stale vs newest status; Silver keeps the newest. To see every event of that key and the state Silver applies, run `local/streaming/show_cdc_key.py /lake <order_id> <line>` in the Spark container (same `spark-submit` options as `cdc-stream-inspect`) |
 | 8 | **Reconcile** | `python -m local.streaming.export_oms_state`, then `dc run --rm cdc-reconcile` | `RESULT: PASS - identical` (0 mismatched, missing, extra) and exit code 0 |
 | 9 | Stop | `dc down` | Kafka topics are lost; Delta tables in `data/_local_lake/` stay |
 
