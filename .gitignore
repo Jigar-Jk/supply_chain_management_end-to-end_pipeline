@@ -30,6 +30,7 @@ data/orders/*
 data/inventory/*
 !data/inventory/.gitkeep
 data/_local_lake/
+data/_state/
 data/gps/
 
 # Python packaging output

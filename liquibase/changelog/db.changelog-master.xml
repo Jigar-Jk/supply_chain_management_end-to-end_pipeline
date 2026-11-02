@@ -61,6 +61,9 @@
     <!-- Part 9h: drop the first design's tables that nothing writes or reads any more -->
     <include file="changes/016-retire-legacy-tables.sql" relativeToChangelogFile="true"/>
 
+    <!-- Part 9i: incremental watermark per REST API source -->
+    <include file="changes/017-api-watermark.sql" relativeToChangelogFile="true"/>
+
     <!--
       Part 10: Gold KPI views and reporting mart.
       One SQL file per object, shared with the local tests (tests/test_gold_kpis.py), so what is
