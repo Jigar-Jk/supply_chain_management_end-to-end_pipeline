@@ -62,6 +62,7 @@ sync:
   exclude:
     - data/**
     - data_generators/**
+    - services/**
     - local/**
     - tests/**
     - docs/**
