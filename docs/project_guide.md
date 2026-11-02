@@ -479,7 +479,8 @@ pipeline moves to DLT.
 
 ### 5.2 How the runner works
 
-The Liquibase CLI is not installed. Instead:
+The Liquibase CLI is not installed (`liquibase/liquibase.properties.example` shows how it would
+connect to Databricks over JDBC, if it is ever used). Instead:
 
 - The files follow the Liquibase format: a master changelog `db.changelog-master.xml` and
   `-- changeset author:id` markers.

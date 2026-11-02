@@ -35,8 +35,7 @@ PENDING, REPROCESSED, REJECTED = "PENDING", "REPROCESSED", "REJECTED"
 DEFAULT_SLA_DAYS = 7
 RUN_BY = "reprocess_quarantine"
 
-# Lifecycle columns and feed tagging live in transform_silver (the quality gate writes them)
-LIFECYCLE_COLUMNS = ts.QUARANTINE_LIFECYCLE_COLUMNS
+# Feed tagging lives in transform_silver (the quality gate writes the lifecycle columns)
 with_feed = ts.tag_quarantine_feed
 
 
