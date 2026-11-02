@@ -1,6 +1,7 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 crash.log
 
 # Data directories - ignore generated files but keep .gitkeep
