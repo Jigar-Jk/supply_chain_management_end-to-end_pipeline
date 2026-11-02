@@ -9,7 +9,8 @@
 
   Sets, from the terraform outputs (nothing typed by hand, no secret read):
     DATABRICKS_HOST, DATABRICKS_AUTH_TYPE=azure-cli, DATABRICKS_CONFIG_FILE (empty, ignores ~/.databrickscfg)
-    BUNDLE_VAR_warehouse_id, _storage_account, _kafka_bootstrap, _alert_email, _quarantine_alert_id
+    BUNDLE_VAR_warehouse_id, _storage_account, _kafka_bootstrap, _alert_email, _quarantine_alert_id,
+    _carrier_api_url
 
   Must be dot-sourced (note the leading ". "), so the variables stay in this window.
 
@@ -41,6 +42,8 @@ $env:BUNDLE_VAR_kafka_bootstrap = (terraform "-chdir=$infra" output -raw eventhu
 $env:BUNDLE_VAR_alert_email = az account show --query user.name -o tsv
 $env:BUNDLE_VAR_quarantine_alert_id = (terraform "-chdir=$infra" output -json quarantine_alert_ids | ConvertFrom-Json).$Target
 if (-not $env:BUNDLE_VAR_quarantine_alert_id) { Write-Warning "No quarantine alert for target '$Target'." }
+$carrierApi = terraform "-chdir=$infra" output -raw carrier_api_url 2>$null
+$env:BUNDLE_VAR_carrier_api_url = if ($LASTEXITCODE -eq 0 -and $carrierApi) { $carrierApi } else { "disabled" }
 
 Write-Host "This window now uses $hostUrl (target $Target):"
 Get-ChildItem Env:BUNDLE_VAR_* | ForEach-Object { Write-Host ("    {0,-36} {1}" -f $_.Name, $_.Value) }

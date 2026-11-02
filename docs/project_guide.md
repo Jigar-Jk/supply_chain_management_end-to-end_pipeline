@@ -126,7 +126,7 @@ Every catalog has the same five schemas:
 |---|---|---|---|
 | REST API | Routing service | OpenRouteService, real API, cached (`seed_api.py`, `normalize_api_data.py`). One real route; the other lanes are synthetic | `bronze.routes` |
 | REST API | Weather service | Open-Meteo, real API, hourly forecast, cached | `bronze.weather` |
-| REST API | Carrier tracking API | `generate_shipments.py` (API-shaped data) | `bronze.shipments` |
+| REST API | Carrier tracking API | Mock carrier API (`services/carrier_api`) serving `generate_shipments.py` data, pulled by `scm-ingest-api` (see 2.6); uploaded as a file while the API step is off | `bronze.shipments` |
 | Batch file | WMS nightly stock file | `generate_inventory.py`, one NDJSON file per night | `bronze.inventory` |
 | Batch file | ERP / WMS / OMS master data | `generate_master_data.py` | `bronze.warehouses`, `products`, `customers`, `carriers` |
 | Batch file | OMS order file feed | `generate_orders.py` | `bronze.orders` |
@@ -139,7 +139,7 @@ All data lives in one ADLS Gen2 storage account. Terraform creates its four cont
 
 | Container | Holds | Access |
 |---|---|---|
-| `landing` | Raw files, one folder per feed (`landing/orders/`, ...) | Files are uploaded by `up.ps1`; the pipeline can only read them (READ_FILES) |
+| `landing` | Raw files, one folder per feed (`landing/orders/`, ...) | File feeds are uploaded by `up.ps1`; the pipeline reads them and writes only the carrier API pages (READ_FILES, WRITE_FILES) |
 | `checkpoints` | Auto Loader progress, one folder per catalog and feed | Pipeline can read and write |
 | `managed` | All Delta tables (Bronze, Silver, Gold), one folder per catalog | Managed by Unity Catalog |
 | `rejected` | Reserved for rejected files | Not used by any job yet |
@@ -222,15 +222,47 @@ produce_gps.py (fleet on real routes, ~2.5% corrupted, 8% "dark" trucks reportin
 - **One code path.** The same code talks to local Kafka and to Azure Event Hubs, which speaks the
   Kafka protocol. Only the bootstrap address and the secret change.
 
-### 2.6 Where each part runs today
+### 2.6 REST API ingestion: the carrier tracking API
+
+A real carrier API needs a commercial account, so `services/carrier_api` is a mock that behaves
+like one: `X-API-Key`, `updated_since` (incremental), cursor pagination of up to 1,000, and random
+429 (with `Retry-After`) and 500. The pipeline talks to it as it would to a real carrier; switching
+later changes only the URL and the key.
+
+```
+Mock carrier API ←── GET /v1/shipments?updated_since=<watermark>&cursor=…  (X-API-Key)
+                 ──→ pages ──→ scm-ingest-api ──→ landing/shipments/api_<run>_p0001.jsonl …
+                                    │                      ↓
+                                    │              Auto Loader → bronze.shipments (unchanged)
+                                    └─ watermark = newest updated_at landed (ops.api_watermark)
+```
+
+| Piece | What it does |
+|---|---|
+| `scm_platform/api/client.py` | Shared client for every REST source: 429 waits for `Retry-After`, 5xx and timeouts back off exponentially (1, 2, 4, 8, 16 s, ±50 % jitter), other 4xx fail at once, pagination by cursor, optional requests per minute; the key never reaches logs |
+| `scm_platform/api/watermark.py` | How far a source has read: the newest `updated_at` landed, never the run time, and never moving back. A JSON file locally, `ops.api_watermark` (Liquibase 017) on Databricks |
+| `scm_platform/api/carrier.py` | One run: read the watermark, page through the API, write each page as one NDJSON file, save the new watermark only after the last page landed |
+| `scm_platform/ingest_api.py` | Job entry point `scm-ingest-api`; the key comes from an environment variable, never an argument |
+
+- **Failure.** A page that keeps failing stops the run before the watermark moves; the next run
+  asks again from the old watermark. Pages that did land arrive twice, and Silver keeps the latest
+  version per shipment (at-least-once delivery, idempotent Silver).
+- **Switch.** In `scm_daily_pipeline`, `carrier_api_enabled` (a condition task) runs
+  `fetch_carrier_api` only when `carrier_api_url` is set; `ingest_bronze_files` runs with
+  `NONE_FAILED`, so it goes ahead when the fetch succeeded or was skipped, but not when it failed.
+  The URL is `disabled` until the mock API runs in Azure, and shipments come from the uploaded file
+  meanwhile.
+
+### 2.7 Where each part runs today
 
 | Component | Local | Azure |
 |---|---|---|
 | File feeds (orders, shipments, inventory, master data, routes, weather) | Yes | Yes. All dashboard data comes from these feeds |
 | CDC (SQL Server → Debezium → Kafka → Bronze → Silver) | Yes, fully tested | Job and tables deployed. Debezium has never been pointed at Event Hubs, so `orders_cdc` is empty |
 | GPS stream | Yes | Event hub and job deployed. The producer has never been run against Azure, so `last_ping_ts` is NULL |
+| Carrier API (mock API → `scm-ingest-api` → landing) | Yes, tested end to end | Task, key secret and landing write permission deployed; switched off (`carrier_api_url = disabled`) until the mock API runs in Azure |
 
-### 2.7 How Silver chooses the order source
+### 2.8 How Silver chooses the order source
 
 The file feed and CDC carry the same orders: one OMS, two delivery paths. The file feed is the old
 nightly extract; CDC is the new live change stream. Silver uses exactly one of them:
@@ -656,7 +688,7 @@ to groups such as analysts and data-engineers.
   their owner's rights, so the analyst sees view results without Silver access.
 - **Other permissions.**
   - SQL warehouse: CAN_USE for the analyst and the pipeline.
-  - Landing: READ_FILES only, for the pipeline.
+  - Landing: READ_FILES and WRITE_FILES for the pipeline (it writes only the carrier API's pages).
   - Checkpoints: READ and WRITE.
   - Secret scope: READ for the pipeline.
   - Quarantine alert and query: CAN_RUN for the pipeline.
@@ -715,7 +747,7 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | `unity_catalog.tf` | Storage credential, external locations, 3 catalogs, 15 schemas, checkpoint volumes |
 | `sql_warehouse.tf` | SQL warehouse |
 | `eventhub.tf` | Event Hubs namespace and the `gps-events` event hub (8 partitions, 7 days) |
-| `keyvault.tf`, `secrets.tf` | Key Vault, Event Hubs auth rule and connection string, Databricks secret scope and secret |
+| `keyvault.tf`, `secrets.tf` | Key Vault, Event Hubs auth rule and connection string, the generated carrier API key, Databricks secret scope and secrets |
 | `governance.tf` | Service principals, grants, warehouse permission, secret ACL, pipeline OAuth secret, `pii_readers` |
 | `alerts.tf` | Quarantine-rate query and alert per catalog, with run permissions for the pipeline |
 | `outputs.tf` | Workspace URL, warehouse id, storage name, Event Hubs namespace, alert ids, pipeline client id and the (sensitive) secret |
@@ -837,7 +869,7 @@ build ──→ dev ───────────────────→
 | Job | Schedule (UTC) | Tasks |
 |---|---|---|
 | `scm_wms_sla_check` | 02:30 daily | check_wms_snapshot (carries stock forward on an SLA miss) |
-| `scm_daily_pipeline` | 03:00 daily | ingest_bronze_files → transform_silver → silver_quality_tests → refresh_gold; quarantine_rate_alert after transform_silver |
+| `scm_daily_pipeline` | 03:00 daily | carrier_api_enabled → fetch_carrier_api (only with a URL) → ingest_bronze_files → transform_silver → silver_quality_tests → refresh_gold; quarantine_rate_alert after transform_silver |
 | `scm_streaming` | every 30 minutes | stream_gps and stream_cdc in parallel on one cluster |
 | `scm_reprocess` | every 2 hours | reprocess_quarantine |
 

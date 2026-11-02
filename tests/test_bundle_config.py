@@ -172,6 +172,35 @@ class TestBundleConfig(unittest.TestCase):
         self.assertNotIn("run_as", targets["dev"])
         self.assertNotIn("user_name", str(targets["prod"].get("run_as")))
 
+    # ------------------------------------------------------------------ carrier API switch
+
+    def daily_tasks(self):
+        return {t["task_key"]: t for t in self.jobs["scm_daily_pipeline"][0]["tasks"]}
+
+    def test_carrier_api_step_is_off_unless_a_url_is_given(self):
+        tasks = self.daily_tasks()
+        self.assertEqual(tasks["carrier_api_enabled"]["condition_task"],
+                         {"op": "NOT_EQUAL", "left": "${var.carrier_api_url}", "right": "disabled"})
+        self.assertEqual(self.bundle["variables"]["carrier_api_url"]["default"], "disabled")
+        self.assertEqual(tasks["fetch_carrier_api"]["depends_on"], [{"task_key": "carrier_api_enabled", "outcome": "true"}])
+
+    def test_bronze_runs_when_the_fetch_is_skipped_but_not_when_it_failed(self):
+        ingest = self.daily_tasks()["ingest_bronze_files"]
+        self.assertEqual({d["task_key"] for d in ingest["depends_on"]}, {"carrier_api_enabled", "fetch_carrier_api"})
+        # NONE_FAILED: none failed and at least one ran; the condition task always runs, the fetch may be skipped
+        self.assertEqual(ingest.get("run_if"), "NONE_FAILED")
+
+    def test_fetch_lands_where_bronze_reads_shipments_and_gets_its_key_from_a_secret(self):
+        tasks = self.daily_tasks()
+        params = tasks["fetch_carrier_api"]["python_wheel_task"]["parameters"]
+        self.assertEqual(params[params.index("--landing") + 1],
+                         "abfss://landing@${var.storage_account}.dfs.core.windows.net/shipments")
+        self.assertNotIn("key", " ".join(params).lower(), "the key must not be a job argument")
+        cluster = self.jobs["scm_daily_pipeline"][0]["job_clusters"][0]["new_cluster"]
+        self.assertEqual(cluster["spark_env_vars"]["CARRIER_API_KEY"], "{{secrets/scm-platform/carrier-api-key}}")
+        secrets_tf = (ROOT / "infra" / "secrets.tf").read_text(encoding="utf-8")
+        self.assertIn('key          = "carrier-api-key"', secrets_tf, "the cluster would not start without it")
+
     # ------------------------------------------------------------------ schedules and cost
 
     def test_sla_check_runs_before_the_daily_pipeline(self):

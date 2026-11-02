@@ -36,3 +36,24 @@ resource "databricks_secret" "eventhub_connection_string" {
   key          = "eventhub-connection-string"
   string_value = azurerm_eventhub_namespace_authorization_rule.databricks_streams.primary_connection_string
 }
+
+# The carrier API key: the mock carrier API (services/carrier_api) accepts it, and the daily
+# pipeline's fetch_carrier_api task sends it as CARRIER_API_KEY. Created on every stack, even while
+# the API is switched off: the job cluster reads it at start-up and would not start without it.
+resource "random_password" "carrier_api_key" {
+  length  = 40
+  special = false
+}
+
+resource "azurerm_key_vault_secret" "carrier_api_key" {
+  name         = "carrier-api-key"
+  value        = random_password.carrier_api_key.result
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_role_assignment.deployer_kv_secrets_officer]
+}
+
+resource "databricks_secret" "carrier_api_key" {
+  scope        = databricks_secret_scope.scm_platform.name
+  key          = "carrier-api-key"
+  string_value = random_password.carrier_api_key.result
+}

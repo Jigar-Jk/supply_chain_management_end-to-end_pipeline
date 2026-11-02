@@ -138,7 +138,8 @@ class TestGrantsAsCode(unittest.TestCase):
                          ["catalog", "checkpoints", "gold", "landing"])
 
     def test_pipeline_files_access_is_least_privilege(self):
-        self.assertEqual(grants_of("landing"), {"pipeline": {"READ_FILES"}})  # reads landing, never writes it
+        # reads the file feeds; writes only what fetch_carrier_api pulls from the carrier API
+        self.assertEqual(grants_of("landing"), {"pipeline": {"READ_FILES", "WRITE_FILES"}})
         self.assertEqual(grants_of("checkpoints"), {"pipeline": {"READ_FILES", "WRITE_FILES"}})
         text = GOVERNANCE_TF.read_text(encoding="utf-8")
         for location in ("rejected", "managed"):
