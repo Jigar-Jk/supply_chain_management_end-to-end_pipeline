@@ -160,6 +160,9 @@ WMS ──SFTP (user wms: create/write/list only)──→ SFTP drop  wms-drop/i
                        landing/inventory/ → 02:30 SLA check → 03:00 Auto Loader → bronze.inventory
 ```
 
+- **Who plays the WMS.** `scripts/up.ps1` uploads the generated CSV with `scripts/wms_sftp_upload.py`
+  (paramiko, as the `wms` user, password from Key Vault into an environment variable, never an
+  argument), then starts `copy_wms_inventory` and waits for it, so a session does not wait for 01:30.
 - **Why ADF here.** A plain file transfer on a schedule, with a built-in SFTP connector and retries;
   if the WMS were on-premises, a self-hosted integration runtime would reach it. The carrier API
   has custom logic (cursor, `Retry-After`, watermark), so it is Python instead (2.6).
@@ -796,7 +799,7 @@ spent only while working.
 | 3b. GitHub values | Sets the CD secrets and variables with `gh`; the OAuth secret is piped from Terraform to GitHub |
 | 4. Databricks login | Uses the az login token; an empty CLI config avoids stale profiles |
 | 5. Tables | `apply_migrations.py` on dev, qa and prod |
-| 6. Data | Generates fresh data dated today and uploads 9 feeds to `landing`, retrying while a new storage role activates |
+| 6. Data | Generates fresh data dated today and uploads 8 feeds to `landing`, retrying while a new storage role activates. Plays the WMS for the ninth: puts the stock CSV on the SFTP drop (`scripts/wms_sftp_upload.py`, password from Key Vault), starts the Data Factory copy at once instead of waiting for 01:30, and waits for it to succeed |
 | 7. Deploy | `databricks bundle deploy`: builds the wheel and creates 4 jobs and the dashboard |
 
 ```powershell
