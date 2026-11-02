@@ -105,6 +105,7 @@ late-master-data lines; and the missing-WMS-night scenario.
 ```
 scm_platform/        pipeline code, packaged as a wheel: Bronze ingestion, Silver transforms,
                      GPS + CDC streams, quarantine reprocessing, SLA checks
+  silver/            Silver layer by concern: quality gate, SCD, dimensions, CDC, facts, writer, pipeline
 data_generators/     synthetic data (master data, orders, inventory, shipments, GPS) and API seeding
 databricks/          bundle jobs (resources/) and the SQL they run (sql/)
 databricks.yml       Databricks Asset Bundle: variables, wheel artifact, dev / qa / prod targets
