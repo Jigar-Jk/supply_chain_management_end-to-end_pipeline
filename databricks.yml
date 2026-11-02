@@ -45,6 +45,10 @@ variables:
   quarantine_alert_id:
     description: SQL alert for this environment (terraform output quarantine_alert_ids)
     default: REPLACE-WITH-QUARANTINE-ALERT-ID
+  carrier_api_url:
+    description: Carrier tracking API the daily pipeline pulls shipments from (terraform output
+      carrier_api_url); "disabled" skips that task and shipments come from the uploaded file
+    default: disabled
   pipeline_sp:
     description: Application id of the scm-pipeline service principal; prod jobs run as it
       (terraform output pipeline_client_id)
@@ -62,6 +66,7 @@ sync:
   exclude:
     - data/**
     - data_generators/**
+    - services/**
     - local/**
     - tests/**
     - docs/**

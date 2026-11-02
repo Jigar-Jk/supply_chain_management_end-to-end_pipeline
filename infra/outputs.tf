@@ -37,6 +37,13 @@ output "quarantine_alert_ids" {
   value       = { for env, alert in databricks_alert.quarantine_rate : env => alert.id }
 }
 
+output "carrier_api_url" {
+  description = "Bundle variable carrier_api_url: where fetch_carrier_api calls the carrier API; 'disabled' skips it"
+  # No carrier API runs in Azure yet, so the daily pipeline keeps taking shipments from the uploaded
+  # file. Once the mock API is deployed (Azure Container Apps), this becomes its URL.
+  value = "disabled"
+}
+
 output "pipeline_client_id" {
   description = "CD login: DATABRICKS_CLIENT_ID (GitHub secret, set by scripts/up.ps1)"
   value       = databricks_service_principal.pipeline.application_id

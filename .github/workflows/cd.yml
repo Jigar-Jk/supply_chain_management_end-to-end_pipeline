@@ -36,6 +36,8 @@ env:
   BUNDLE_VAR_kafka_bootstrap: ${{ vars.KAFKA_BOOTSTRAP }}
   BUNDLE_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
   BUNDLE_VAR_pipeline_sp: ${{ vars.DATABRICKS_CLIENT_ID }}
+  # Not set (a session started before the carrier API existed): keep the API step switched off
+  BUNDLE_VAR_carrier_api_url: ${{ vars.CARRIER_API_URL || 'disabled' }}
   DATABRICKS_CLI_VERSION: "1.17.0"
 
 jobs:

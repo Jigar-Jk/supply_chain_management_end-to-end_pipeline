@@ -107,6 +107,7 @@ scm_platform/        pipeline code, packaged as a wheel: Bronze ingestion, Silve
                      GPS + CDC streams, quarantine reprocessing, SLA checks
   silver/            Silver layer by concern: quality gate, SCD, dimensions, CDC, facts, writer, pipeline
 data_generators/     synthetic data (master data, orders, inventory, shipments, GPS) and API seeding
+services/            stand-ins for external systems: carrier_api/ (mock carrier tracking API)
 databricks/          bundle jobs (resources/) and the SQL they run (sql/)
 databricks.yml       Databricks Asset Bundle: variables, wheel artifact, dev / qa / prod targets
 liquibase/           table migrations (changes/) and Gold KPI views (gold/)

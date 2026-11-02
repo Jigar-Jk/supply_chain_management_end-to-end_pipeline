@@ -67,6 +67,8 @@ $storage = $out.storage_account_name.value
 $kafka = "$($out.eventhub_namespace.value).servicebus.windows.net:9093"
 $alertId = $out.quarantine_alert_ids.value.$Target           # the 5 % quarantine alert of this environment
 if (-not $alertId) { throw "No quarantine alert for target '$Target' in the terraform outputs." }
+# Where the daily pipeline pulls shipments from the carrier API; "disabled": from the uploaded file
+$carrierApi = if ($out.carrier_api_url) { $out.carrier_api_url.value } else { "disabled" }
 Write-Host "    workspace $hostUrl | warehouse $warehouse | storage $storage | alert $alertId"
 
 # ------------------------------------------------------------------ 3b. values for CD (GitHub)
@@ -97,6 +99,7 @@ if ($ghReady) {
             WAREHOUSE_ID         = $warehouse
             STORAGE_ACCOUNT      = $storage
             KAFKA_BOOTSTRAP      = $kafka
+            CARRIER_API_URL      = $carrierApi
         }
         foreach ($name in $cdVars.Keys) { gh variable set $name --body $cdVars[$name]; Check "gh variable set $name" }
         foreach ($envName in "dev", "qa", "prod") {
@@ -138,7 +141,10 @@ if (-not $SkipData) {
     } finally { Pop-Location }
 
     Step "Uploading to the landing container"
-    foreach ($feed in "routes", "weather", "shipments", "warehouses", "products", "customers", "carriers", "orders", "inventory") {
+    $feeds = "routes", "weather", "shipments", "warehouses", "products", "customers", "carriers", "orders", "inventory"
+    # With the carrier API on, the pipeline fetches shipments itself; uploading the file too would land them twice
+    if ($carrierApi -ne "disabled") { $feeds = $feeds | Where-Object { $_ -ne "shipments" } }
+    foreach ($feed in $feeds) {
         for ($try = 1; ; $try++) {
             az storage blob upload-batch --account-name $storage --destination landing --destination-path $feed `
                 --source (Join-Path $repo "data\$feed") --pattern "*.jsonl" --auth-mode login --overwrite -o none 2>$null
@@ -156,7 +162,8 @@ Step "Deploying the bundle to $Target"
 Push-Location $repo
 try {
     databricks bundle deploy -t $Target "--var=warehouse_id=$warehouse" "--var=storage_account=$storage" `
-        "--var=kafka_bootstrap=$kafka" "--var=alert_email=$($account.user.name)" "--var=quarantine_alert_id=$alertId"
+        "--var=kafka_bootstrap=$kafka" "--var=alert_email=$($account.user.name)" "--var=quarantine_alert_id=$alertId" `
+        "--var=carrier_api_url=$carrierApi"
     Check "bundle deploy"
 } finally { Pop-Location }
 

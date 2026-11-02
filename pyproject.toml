@@ -19,10 +19,11 @@ scm-stream-gps = "scm_platform.stream_gps_events:main"
 scm-stream-cdc = "scm_platform.stream_cdc_events:main"
 scm-reprocess-quarantine = "scm_platform.reprocess_quarantine:main"
 scm-wms-sla-check = "scm_platform.sla_checks:main"
+scm-ingest-api = "scm_platform.ingest_api:main"
 
 [tool.setuptools]
 # Every sub-package must be listed, or the wheel ships without it (tests/test_bundle_config.py checks).
-packages = ["scm_platform", "scm_platform.silver"]
+packages = ["scm_platform", "scm_platform.api", "scm_platform.silver"]
 
 
 [tool.ruff]

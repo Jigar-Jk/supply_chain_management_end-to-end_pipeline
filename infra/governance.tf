@@ -67,13 +67,15 @@ resource "databricks_permissions" "warehouse" {
 
 # Files outside the catalogs: Bronze reads the landing container, Auto Loader keeps its progress in
 # checkpoints. Catalog grants do not reach external locations, so the pipeline gets them here.
+# Landing is also written: fetch_carrier_api lands the carrier API's pages in landing/shipments/
+# (file feeds are still uploaded by scripts/up.ps1, not by the pipeline).
 # rejected and managed get no grant: no job reads or writes them directly.
 resource "databricks_grants" "landing" {
   external_location = databricks_external_location.locations["landing"].id
 
   grant {
     principal  = databricks_service_principal.pipeline.application_id
-    privileges = ["READ_FILES"]
+    privileges = ["READ_FILES", "WRITE_FILES"]
   }
 }
 

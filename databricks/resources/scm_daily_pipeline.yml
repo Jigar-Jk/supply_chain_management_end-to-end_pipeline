@@ -1,5 +1,12 @@
-# Daily batch: Bronze files -> Silver -> Silver quality tests -> Gold refresh.
+# Daily batch: [carrier API -> landing] -> Bronze files -> Silver -> Silver quality tests -> Gold refresh.
 # Runs after scm_wms_sla_check (02:30) so a missing WMS night is already carried forward.
+#
+# The carrier API step is switched by var.carrier_api_url:
+#   carrier_api_enabled   condition task: is a URL set (not "disabled")?
+#   fetch_carrier_api     only on "true": new shipments from the API into landing/shipments/
+#   ingest_bronze_files   NONE_FAILED: runs when the fetch succeeded or was skipped, not when it failed,
+#                         so a broken API run never lets Bronze go ahead with half the shipments
+# While the URL is "disabled", shipments come from the file scripts/up.ps1 uploads, as before.
 resources:
   jobs:
     scm_daily_pipeline:
@@ -26,12 +33,40 @@ resources:
             spark_conf:
               "spark.databricks.cluster.profile": "singleNode"
               "spark.master": "local[*]"
+            spark_env_vars:
+              CARRIER_API_KEY: "{{secrets/scm-platform/carrier-api-key}}"
             custom_tags:
               "ResourceClass": "SingleNode"
               "Project": "scm-logistics-platform"
 
       tasks:
+        - task_key: carrier_api_enabled
+          condition_task:
+            op: NOT_EQUAL
+            left: "${var.carrier_api_url}"
+            right: "disabled"
+
+        - task_key: fetch_carrier_api
+          depends_on:
+            - task_key: carrier_api_enabled
+              outcome: "true"
+          job_cluster_key: batch_compute
+          max_retries: 1                       # the client already retries each request with backoff
+          min_retry_interval_millis: 300000
+          python_wheel_task:
+            package_name: scm_platform
+            entry_point: scm-ingest-api
+            parameters: ["--source", "carrier", "--base-url", "${var.carrier_api_url}", "--catalog", "${var.catalog}",
+                         "--landing", "abfss://landing@${var.storage_account}.dfs.core.windows.net/shipments",
+                         "--run-id", "{{job.run_id}}"]
+          libraries:
+            - whl: ../../dist/*.whl
+
         - task_key: ingest_bronze_files
+          depends_on:
+            - task_key: carrier_api_enabled
+            - task_key: fetch_carrier_api
+          run_if: NONE_FAILED
           job_cluster_key: batch_compute
           max_retries: 2
           min_retry_interval_millis: 60000
