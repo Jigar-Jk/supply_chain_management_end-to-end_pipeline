@@ -1,0 +1,52 @@
+[
+  {
+    "name": "copy_to_landing",
+    "description": "Every CSV in the WMS drop's inbox/ that existed when the run started -> landing/inventory/, byte for byte",
+    "type": "Copy",
+    "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 120 },
+    "inputs": [ { "referenceName": "ds_wms_inbox", "type": "DatasetReference" } ],
+    "outputs": [ { "referenceName": "ds_landing_inventory", "type": "DatasetReference" } ],
+    "typeProperties": {
+      "source": {
+        "type": "BinarySource",
+        "storeSettings": {
+          "type": "SftpReadSettings",
+          "recursive": false,
+          "wildcardFolderPath": "inbox",
+          "wildcardFileName": "*.csv",
+          "modifiedDatetimeEnd": { "value": "@pipeline().TriggerTime", "type": "Expression" }
+        }
+      },
+      "sink": {
+        "type": "BinarySink",
+        "storeSettings": { "type": "AzureBlobStorageWriteSettings" }
+      }
+    }
+  },
+  {
+    "name": "archive_inbox",
+    "description": "The same files -> archive/, deleted from inbox/: tomorrow's run does not land them again",
+    "type": "Copy",
+    "dependsOn": [ { "activity": "copy_to_landing", "dependencyConditions": [ "Succeeded" ] } ],
+    "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 120 },
+    "inputs": [ { "referenceName": "ds_wms_inbox", "type": "DatasetReference" } ],
+    "outputs": [ { "referenceName": "ds_wms_archive", "type": "DatasetReference" } ],
+    "typeProperties": {
+      "source": {
+        "type": "BinarySource",
+        "storeSettings": {
+          "type": "SftpReadSettings",
+          "recursive": false,
+          "wildcardFolderPath": "inbox",
+          "wildcardFileName": "*.csv",
+          "modifiedDatetimeEnd": { "value": "@pipeline().TriggerTime", "type": "Expression" },
+          "deleteFilesAfterCompletion": true
+        }
+      },
+      "sink": {
+        "type": "BinarySink",
+        "storeSettings": { "type": "SftpWriteSettings" }
+      }
+    }
+  }
+]

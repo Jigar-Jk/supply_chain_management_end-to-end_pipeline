@@ -147,6 +147,27 @@ All data lives in one ADLS Gen2 storage account. Terraform creates its four cont
 Streaming checkpoints (GPS and CDC) live in a Unity Catalog volume:
 `/Volumes/<catalog>/ops/checkpoints`.
 
+**How the WMS file reaches landing.** A warehouse system does not get access to the data lake. It
+drops its nightly CSV on an SFTP server, and Azure Data Factory copies it in (`infra/wms_sftp.tf`,
+`infra/adf.tf`):
+
+```
+WMS ──SFTP (user wms: create/write/list only)──→ SFTP drop  wms-drop/inbox/inventory_<night>.csv
+                                                      │  01:30 UTC  ADF copy_wms_inventory
+                                                      │   1. inbox/*.csv → landing/inventory/  (byte for byte)
+                                                      │   2. same files → archive/, deleted from inbox/
+                                                      ▼
+                       landing/inventory/ → 02:30 SLA check → 03:00 Auto Loader → bronze.inventory
+```
+
+- **Why ADF here.** A plain file transfer on a schedule, with a built-in SFTP connector and retries;
+  if the WMS were on-premises, a self-hosted integration runtime would reach it. The carrier API
+  has custom logic (cursor, `Retry-After`, watermark), so it is Python instead (2.6).
+- **Secrets.** Azure generates each SFTP user's password; both go to Key Vault. ADF reads its
+  password from Key Vault and writes the lake with its managed identity, on the landing container only.
+- **Both steps take the same files:** `inbox/*.csv` modified before the run started, so a file that
+  arrives mid-run is neither archived without landing nor lost.
+
 ### 2.3 File ingestion with Auto Loader
 
 - **Only new files.** A checkpoint remembers which files were read, so a re-run never loads a file twice.
@@ -753,9 +774,11 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | `keyvault.tf`, `secrets.tf` | Key Vault, Event Hubs auth rule and connection string, the generated carrier API key, Databricks secret scope and secrets |
 | `governance.tf` | Service principals, grants, warehouse permission, secret ACL, pipeline OAuth secret, `pii_readers` |
 | `alerts.tf` | Quarantine-rate query and alert per catalog, with run permissions for the pipeline |
+| `wms_sftp.tf` | The WMS SFTP drop: a storage account with SFTP on, container `wms-drop`, local users `wms` and `adf`, their passwords in Key Vault |
+| `adf.tf`, `adf/*.json` | Data Factory: Key Vault, SFTP and data lake connections, datasets, pipeline `copy_wms_inventory`, daily 01:30 UTC trigger, roles (Key Vault secrets, landing only) |
 | `outputs.tf` | Workspace URL, warehouse id, storage name, Event Hubs namespace, alert ids, pipeline client id and the (sensitive) secret |
 
-One `terraform apply` creates 71 resources. The settings for the student subscription are in
+One `terraform apply` creates 91 resources. The settings for the student subscription are in
 `infra/envs/student.tfvars`.
 
 ### 8.2 Session scripts
@@ -871,6 +894,7 @@ build ──→ dev ───────────────────→
 
 | Job | Schedule (UTC) | Tasks |
 |---|---|---|
+| ADF `copy_wms_inventory` | 01:30 daily | WMS CSV from the SFTP drop to landing/inventory/, then archive (Data Factory, not a Databricks job) |
 | `scm_wms_sla_check` | 02:30 daily | check_wms_snapshot (carries stock forward on an SLA miss) |
 | `scm_daily_pipeline` | 03:00 daily | carrier_api_enabled → fetch_carrier_api (only with a URL) → ingest_bronze_files → transform_silver → silver_quality_tests → refresh_gold; quarantine_rate_alert after transform_silver |
 | `scm_streaming` | every 30 minutes | stream_gps and stream_cdc in parallel on one cluster |

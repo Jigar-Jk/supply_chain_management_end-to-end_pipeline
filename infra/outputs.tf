@@ -44,6 +44,21 @@ output "carrier_api_url" {
   value = "disabled"
 }
 
+output "wms_sftp" {
+  description = "Where the WMS drops its nightly CSV: sftp <username>@<host>, password in Key Vault secret <password_secret>"
+  value = {
+    host            = "${azurerm_storage_account.wms_drop.name}.blob.core.windows.net"
+    username        = "${azurerm_storage_account.wms_drop.name}.${azurerm_storage_account_local_user.wms.name}"
+    folder          = "inbox"
+    password_secret = azurerm_key_vault_secret.wms_sftp_password.name
+  }
+}
+
+output "data_factory_name" {
+  description = "Run the WMS copy by hand: az datafactory pipeline create-run --factory-name <this> --name copy_wms_inventory"
+  value       = azurerm_data_factory.adf.name
+}
+
 output "pipeline_client_id" {
   description = "CD login: DATABRICKS_CLIENT_ID (GitHub secret, set by scripts/up.ps1)"
   value       = databricks_service_principal.pipeline.application_id
