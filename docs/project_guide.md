@@ -474,7 +474,7 @@ pipeline moves to DLT.
 | Object | Managed by |
 |---|---|
 | Catalogs, schemas, volumes, storage, external locations, grants, groups | Terraform |
-| All tables (Bronze, Silver, quarantine, ops) and constraints | Liquibase changesets (`liquibase/changelog/changes/001-015`) |
+| All tables (Bronze, Silver, quarantine, ops) and constraints | Liquibase changesets (`liquibase/changelog/changes/001-016`) |
 | Gold views and the mart | Liquibase with `runOnChange` (`liquibase/changelog/gold/01-09`) |
 
 ### 5.2 How the runner works
@@ -503,7 +503,7 @@ The Liquibase CLI is not installed. Instead:
 
 Migrations never run inside a Databricks job. They are part of deployment:
 
-- **`up.ps1` step 5** applies all three catalogs on a fresh workspace (62 changesets each).
+- **`up.ps1` step 5** applies all three catalogs on a fresh workspace (65 changesets each).
 - **CD** runs migrations first in every environment, then the bundle deploy, then the test run. The
   qa job ends with the prod dry-run plan.
 

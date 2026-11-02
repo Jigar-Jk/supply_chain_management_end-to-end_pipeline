@@ -236,7 +236,8 @@ erDiagram
   Gold excludes it.
 - **`silver.weather`** (hourly Open-Meteo forecasts) is a supporting table with no foreign keys; its
   signal reaches the facts as `fact_shipment.weather_risk`.
-- `silver.routes` / `silver.shipments` from migration 002 are legacy tables the pipeline no longer writes.
+- `silver.routes`, `silver.shipments` and `quarantine.invalid_records` were tables of the first design
+  (migration 002). Nothing writes or reads them any more, and migration 016 drops them.
 
 ## 2. Quarantine and ops
 

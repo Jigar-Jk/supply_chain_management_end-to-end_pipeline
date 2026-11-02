@@ -58,6 +58,9 @@
     <!-- Part 9g: streaming lag limits for the 30-minute schedule; CDC source named sqlserver_cdc -->
     <include file="changes/015-streaming-sla-and-sqlserver-cdc-name.sql" relativeToChangelogFile="true"/>
 
+    <!-- Part 9h: drop the first design's tables that nothing writes or reads any more -->
+    <include file="changes/016-retire-legacy-tables.sql" relativeToChangelogFile="true"/>
+
     <!--
       Part 10: Gold KPI views and reporting mart.
       One SQL file per object, shared with the local tests (tests/test_gold_kpis.py), so what is
