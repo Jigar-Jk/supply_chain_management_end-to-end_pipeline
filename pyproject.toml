@@ -22,7 +22,7 @@ scm-wms-sla-check = "scm_platform.sla_checks:main"
 
 [tool.setuptools]
 # Every sub-package must be listed, or the wheel ships without it (tests/test_bundle_config.py checks).
-packages = ["scm_platform", "scm_platform.silver"]
+packages = ["scm_platform", "scm_platform.api", "scm_platform.silver"]
 
 
 [tool.ruff]
