@@ -186,9 +186,20 @@ class TestBundleConfig(unittest.TestCase):
 
     def test_bronze_runs_when_the_fetch_is_skipped_but_not_when_it_failed(self):
         ingest = self.daily_tasks()["ingest_bronze_files"]
-        self.assertEqual({d["task_key"] for d in ingest["depends_on"]}, {"carrier_api_enabled", "fetch_carrier_api"})
-        # NONE_FAILED: none failed and at least one ran; the condition task always runs, the fetch may be skipped
+        self.assertEqual(ingest["depends_on"], [{"task_key": "carrier_api_enabled", "outcome": "false"},
+                                                {"task_key": "fetch_carrier_api"}])
+        # NONE_FAILED: none failed and at least one ran - the "false" branch when the switch is off,
+        # the fetch when it is on (and a failed fetch stops Bronze)
         self.assertEqual(ingest.get("run_if"), "NONE_FAILED")
+
+    def test_every_dependency_on_a_condition_task_names_an_outcome(self):
+        """Found on Azure: Databricks rejects the job (400) when a condition dependency has no outcome."""
+        for key, (job, _) in self.jobs.items():
+            conditions = {t["task_key"] for t in job["tasks"] if "condition_task" in t}
+            for task in job["tasks"]:
+                for dep in task.get("depends_on", []):
+                    if dep["task_key"] in conditions:
+                        self.assertIn(dep.get("outcome"), ("true", "false"), f"{key}.{task['task_key']}")
 
     def test_fetch_lands_where_bronze_reads_shipments_and_gets_its_key_from_a_secret(self):
         tasks = self.daily_tasks()
