@@ -23,6 +23,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
+from scm_platform.run_log import log_step, run_log_row, stream_rows, utc_now
+
 try:
     from pyspark.sql import DataFrame, SparkSession
     from pyspark.sql.functions import col, current_timestamp, expr, from_json, lit
@@ -171,6 +173,7 @@ def main() -> None:
     parser.add_argument("--lake-path", default=None, help="Local: root folder for Delta tables")
     parser.add_argument("--checkpoint-root", default=None)
     parser.add_argument("--available-now", action="store_true", help="Process what is available, then stop")
+    parser.add_argument("--run-id", default=None, help="Job run id for ops.pipeline_run_log ({{job.run_id}})")
     args, _ = parser.parse_known_args()
 
     root = args.checkpoint_root or (f"{args.lake_path.rstrip('/')}/_checkpoints" if args.lake_path else None)
@@ -180,9 +183,22 @@ def main() -> None:
                        catalog=args.catalog, lake_path=args.lake_path, available_now=args.available_now)
 
     spark = SparkSession.builder.appName("stream_gps_events").getOrCreate()
+    started = utc_now()
     bronze_q, dlq_q = start_streams(spark, cfg, os.environ.get("EVENTHUB_CONNECTION_STRING"))
     bronze_q.awaitTermination()
     dlq_q.awaitTermination()
+    log_drain(spark, cfg, bronze_q, dlq_q, args.run_id, started)
+
+
+def log_drain(spark: SparkSession, cfg: StreamConfig, bronze_q, dlq_q, run_id: Optional[str], started) -> bool:
+    """After an available-now drain: one SUCCESS row for gps_stream (events in Bronze, dead letters)."""
+    if not cfg.available_now:
+        return False                       # a continuous stream never finishes, so there is no drain to log
+    read, written = stream_rows([bronze_q])
+    _, dead_letters = stream_rows([dlq_q])
+    return log_step(spark, cfg.catalog, run_log_row(
+        run_id or "stream", "gps_stream", "stream_gps", "bronze", started,
+        rows_read=read, rows_written=written, rows_quarantined=dead_letters))
 
 
 if __name__ == "__main__":

@@ -50,8 +50,8 @@ class TestDqTiles(unittest.TestCase):
                                     "retry_count int") \
             .withColumn("ingested_at", minutes_ago(20)).createOrReplaceTempView(local_name("quarantine", "records"))
 
-        # SLA: wms has a recent SLA miss (RED), carrier is 90 min stale vs 60 (AMBER),
-        # CDC ran 5 min ago vs 15 (GREEN), GPS never succeeded (RED)
+        # SLA: wms has a recent SLA miss (RED); carrier, a daily batch source, last ran 90 min ago (GREEN:
+        # within a day + 60 min); CDC ran 5 min ago vs 15 (GREEN); GPS never succeeded (RED)
         spark.createDataFrame([("wms_batch", "02:00", 120), ("carrier_api", "01:00", 60), ("sqlserver_cdc", None, 15),
                                ("gps_stream", None, 5)], "source_system string, expected_by_time string, max_lag_minutes int") \
             .createOrReplaceTempView(local_name("ops", "sla_config"))
@@ -93,27 +93,49 @@ class TestDqTiles(unittest.TestCase):
 
     def test_tile4_pipeline_sla_status(self):
         got = {r.source_system: r.sla_status for r in self.tiles["04_pipeline_sla_status"]}
-        self.assertEqual(got, {"wms_batch": "RED", "carrier_api": "AMBER", "sqlserver_cdc": "GREEN", "gps_stream": "RED"})
+        self.assertEqual(got, {"wms_batch": "RED", "carrier_api": "GREEN", "sqlserver_cdc": "GREEN", "gps_stream": "RED"})
         wms = next(r for r in self.tiles["04_pipeline_sla_status"] if r.source_system == "wms_batch")
         self.assertEqual(wms.miss_message, "WMS snapshot missing")
 
-    def test_tile4_rejected_file_turns_source_red(self):
-        """A file rejected for schema drift turns its source RED even when the job itself succeeded."""
+    def test_tile4_batch_sources_get_a_day_streaming_sources_do_not(self):
+        got = {r.source_system: r.allowed_lag_minutes for r in self.tiles["04_pipeline_sla_status"]}
+        self.assertEqual(got, {"wms_batch": 1440 + 120, "carrier_api": 1440 + 60, "sqlserver_cdc": 15, "gps_stream": 5})
+
+    def sla_with_extra_log_rows(self, rows):
+        """The SLA tile with extra rows in the run log, restored afterwards."""
         view = local_name("ops", "pipeline_run_log")
         current = self.spark.table(view)        # snapshot: a view must not be redefined from itself
         original = self.spark.createDataFrame(current.collect(), current.schema)
-        drift = (self.spark.createDataFrame(
-                     [("sqlserver_cdc", "REJECTED_FILE", 3, "Schema drift - fields not matching the feed contract: qty")],
-                     "source_system string, status string, mins int, error_message string")
+        extra = (self.spark.createDataFrame(rows, "source_system string, status string, mins int, error_message string")
                  .withColumn("ended_at", F.expr("current_timestamp() - make_interval(0, 0, 0, 0, 0, mins, 0)")))
-        original.unionByName(drift).createOrReplaceTempView(view)
+        original.unionByName(extra).createOrReplaceTempView(view)
         try:
             tile = self.spark.sql(localize_sql((DQ_DIR / "04_pipeline_sla_status.sql").read_text(encoding="utf-8")))
-            cdc = next(r for r in tile.collect() if r.source_system == "sqlserver_cdc")
-            self.assertEqual(cdc.sla_status, "RED")
-            self.assertIn("Schema drift", cdc.miss_message)
+            return {r.source_system: r for r in tile.collect()}
         finally:
             original.createOrReplaceTempView(view)
+
+    def test_tile4_a_daily_source_turns_amber_then_red_only_after_a_missed_day(self):
+        """carrier_api: day + 60 min = 1500 min allowed, RED after 1560."""
+        def status(mins_ago):
+            view = local_name("ops", "pipeline_run_log")
+            current = self.spark.table(view)
+            original = self.spark.createDataFrame(current.collect(), current.schema)
+            original.filter("source_system <> 'carrier_api'").createOrReplaceTempView(view)
+            try:
+                return self.sla_with_extra_log_rows([("carrier_api", "SUCCESS", mins_ago, None)])["carrier_api"].sla_status
+            finally:
+                original.createOrReplaceTempView(view)
+        self.assertEqual(status(23 * 60), "GREEN")       # yesterday's run, today's not due yet
+        self.assertEqual(status(1530), "AMBER")          # a day and 30 min past the 60-minute allowance
+        self.assertEqual(status(1600), "RED")            # a run was missed
+
+    def test_tile4_rejected_file_turns_source_red(self):
+        """A file rejected for schema drift turns its source RED even when the job itself succeeded."""
+        cdc = self.sla_with_extra_log_rows(
+            [("sqlserver_cdc", "REJECTED_FILE", 3, "Schema drift - fields not matching the feed contract: qty")])["sqlserver_cdc"]
+        self.assertEqual(cdc.sla_status, "RED")
+        self.assertIn("Schema drift", cdc.miss_message)
 
     def test_tiles_read_only_bronze_quarantine_and_ops(self):
         import re

@@ -33,7 +33,13 @@ from scm_platform.silver.facts import (
     transform_gps_events,
     transform_weather,
 )
-from scm_platform.silver.quality import conform_to_contract, rejected_file_log_rows, schema_drift_report
+from scm_platform.run_log import log_step, run_log_row, utc_now
+from scm_platform.silver.quality import (
+    FEED_SOURCE_SYSTEM,
+    conform_to_contract,
+    rejected_file_log_rows,
+    schema_drift_report,
+)
 from scm_platform.silver.writer import write_quarantine_table, write_silver_table
 
 
@@ -82,6 +88,12 @@ def run_silver_pipeline(
             rejected.write.mode("append").saveAsTable(run_log_table)
         return df
 
+    def log_fact(step, feed, started, fact_df, quarantine_df):
+        """A source's data reached Silver: one SUCCESS row for the pipeline SLA tile."""
+        log_step(spark, catalog, run_log_row(
+            batch_id, FEED_SOURCE_SYSTEM[feed], step, "silver", started,
+            rows_written=fact_df.count(), rows_quarantined=quarantine_df.count()))
+
     def load_dimension(name, transform, bronze_df, sk_col, feed):
         existing = _table_or_none(spark, f"{catalog}.silver.{name}")
         dim_df, quar_df = transform(bronze_df, existing, batch_id=batch_id)
@@ -121,6 +133,7 @@ def run_silver_pipeline(
                      else file_feed(_table_or_none(spark, f"{catalog}.bronze.orders"), "orders"))
     order_freshness = "source_position" if bronze_orders_cdc is not None else "updated_at"
     if bronze_orders is not None and "dim_customer" in dims and "dim_product" in dims:
+        started = utc_now()
         fact_order, quar_order = transform_fact_order(
             bronze_orders, dims["dim_customer"], dims["dim_product"], dims.get("dim_warehouse"), dim_date,
             batch_id=batch_id,
@@ -130,6 +143,7 @@ def run_silver_pipeline(
             freshness_col=order_freshness,
         )
         write_quarantine_table(quar_order, quarantine_table, spark=spark, source_feed="orders")
+        log_fact("fact_order", "orders", started, fact_order, quar_order)
 
     bronze_inventory_cdc = _rows_or_none(spark, f"{catalog}.bronze.inventory_cdc")
     if bronze_inventory_cdc is not None:
@@ -144,6 +158,7 @@ def run_silver_pipeline(
     # 4. Transform and write Fact Inventory Snapshot (WMS nightly reconciliation)
     bronze_inventory = file_feed(_table_or_none(spark, f"{catalog}.bronze.inventory"), "inventory")
     if bronze_inventory is not None and "dim_warehouse" in dims and "dim_product" in dims:
+        started = utc_now()
         fact_inventory, quar_inventory = transform_fact_inventory_snapshot(
             bronze_inventory, dims["dim_warehouse"], dims["dim_product"], dim_date, batch_id=batch_id
         )
@@ -152,6 +167,7 @@ def run_silver_pipeline(
             spark=spark, freshness_col="recorded_at",
         )
         write_quarantine_table(quar_inventory, quarantine_table, spark=spark, source_feed="inventory")
+        log_fact("fact_inventory_snapshot", "inventory", started, fact_inventory, quar_inventory)
 
     # 5. GPS/RFID events (streamed into bronze.gps_events) -> quarantine + latest ping per shipment
     last_ping = None
@@ -162,6 +178,7 @@ def run_silver_pipeline(
         last_ping = latest_ping_per_shipment(gps_clean)
 
     # 6. Transform and write Fact Shipment
+    started = utc_now()
     fact_shipment, quar_shipment = transform_fact_shipment(
         bronze_shipments, dim_carrier, dim_route, dim_date, batch_id=batch_id,
         df_dim_warehouse=dims.get("dim_warehouse"), df_last_ping=last_ping,
@@ -170,6 +187,7 @@ def run_silver_pipeline(
         fact_shipment, f"{catalog}.silver.fact_shipment", key_col="shipment_leg_sk", spark=spark, freshness_col="updated_at"
     )
     write_quarantine_table(quar_shipment, quarantine_table, spark=spark, source_feed="shipments")
+    log_fact("fact_shipment", "shipments", started, fact_shipment, quar_shipment)
 
     # 7. Transform weather observations (auxiliary mart)
     silver_weather, quar_weather = transform_weather(bronze_weather, batch_id=batch_id)
