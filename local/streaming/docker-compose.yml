@@ -103,6 +103,61 @@ services:
       timeout: 5s
       retries: 36
 
+  # The same Debezium, publishing to Azure Event Hubs instead of the local Kafka (profile "azure", so a
+  # plain `up` never starts it). scripts/cdc_azure.ps1 starts it with the Event Hubs settings in its
+  # environment (connection string from Key Vault, never in a file) and registers
+  # cdc/debezium/sqlserver-connector.azure.json. Its internal topics are event hubs from
+  # infra/cdc_eventhubs.tf (compacted); the schema history is a file on the connect-azure-data volume.
+  # Its variables have empty defaults (not :?) so local-only commands work without them; the script
+  # checks they are set before it starts this service.
+  kafka-connect-azure:
+    image: quay.io/debezium/connect:3.0.0.Final
+    container_name: scm-kafka-connect-azure
+    profiles: ["azure"]
+    ports:
+      - "8084:8083"                  # REST API; 8084 so it can run next to the local Connect
+    mem_limit: 900m
+    volumes:
+      - connect-azure-data:/kafka/data
+    environment:
+      BOOTSTRAP_SERVERS: ${EVENTHUB_BOOTSTRAP:-set-by-scripts-cdc_azure.ps1}
+      GROUP_ID: scm-connect-azure
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets          # Debezium's LSN bookmark
+      STATUS_STORAGE_TOPIC: connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 3            # Event Hubs replicates by itself; the topics already exist
+      OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      STATUS_STORAGE_REPLICATION_FACTOR: 3
+      HEAP_OPTS: "-Xms256m -Xmx512m"
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      DEBEZIUM_SQL_PASSWORD: ${DEBEZIUM_SQL_PASSWORD:?Set DEBEZIUM_SQL_PASSWORD (debezium_cdc login password)}
+      # Event Hubs' Kafka endpoint: SASL_SSL with the connection string as the password, for the
+      # worker itself and for the producer (change events) and consumer (internal topics) it runs.
+      # Idle connections are closed by Event Hubs after 240 s, so clients recycle theirs earlier.
+      CONNECT_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_SASL_MECHANISM: PLAIN
+      CONNECT_SASL_JAAS_CONFIG: &eh_jaas >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="$$ConnectionString" password="${EVENTHUB_DEBEZIUM_CONNECTION_STRING:-}";
+      CONNECT_CONNECTIONS_MAX_IDLE_MS: "180000"
+      CONNECT_METADATA_MAX_AGE_MS: "180000"
+      CONNECT_PRODUCER_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_PRODUCER_SASL_MECHANISM: PLAIN
+      CONNECT_PRODUCER_SASL_JAAS_CONFIG: *eh_jaas
+      CONNECT_PRODUCER_CONNECTIONS_MAX_IDLE_MS: "180000"
+      CONNECT_PRODUCER_METADATA_MAX_AGE_MS: "180000"
+      CONNECT_CONSUMER_SECURITY_PROTOCOL: SASL_SSL
+      CONNECT_CONSUMER_SASL_MECHANISM: PLAIN
+      CONNECT_CONSUMER_SASL_JAAS_CONFIG: *eh_jaas
+      CONNECT_CONSUMER_CONNECTIONS_MAX_IDLE_MS: "180000"
+      CONNECT_CONSUMER_METADATA_MAX_AGE_MS: "180000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/ >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
   # Drain the topic into Bronze (availableNow) and stop. Remove --available-now to run continuously.
   gps-stream:
     <<: *spark
@@ -181,3 +236,4 @@ services:
 
 volumes:
   ivy-cache:
+  connect-azure-data:            # Debezium's schema history for the Event Hubs run (keep it with the offsets)

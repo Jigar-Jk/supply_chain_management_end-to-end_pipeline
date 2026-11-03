@@ -106,15 +106,33 @@ reconciliation with **PASS - identical**.
 - The Kafka bootstrap is the Event Hubs namespace (`<namespace>.servicebus.windows.net:9093`, bundle
   variable `kafka_bootstrap`). The connection string comes from the secret scope
   (`eventhub-connection-string`). Event Hubs speaks the Kafka protocol, so no code changes.
-- **Not done yet:** pointing Kafka Connect at Event Hubs for a cloud run (remaining-work line 6).
-  For the demo, CDC is shown on the local stack; the cloud job is deployed and drains whatever the
-  topics hold.
+- **Debezium → Event Hubs** (`scripts/cdc_azure.ps1`): the same Debezium image runs on the laptop
+  next to SQL Server as `kafka-connect-azure` (compose profile `azure`) and publishes to the
+  session's Event Hubs instead of the local Kafka:
+  - `infra/cdc_eventhubs.tf` declares every topic, because Event Hubs creates topics only for a
+    client with Manage rights:
+    - the two change topics `scm.scm_oms.dbo.order_lines` and `.inventory` (7 days, like the CDC
+      change tables);
+    - Connect's `connect_configs`, `connect_offsets` and `connect_statuses`, all compacted.
+  - The rule `debezium-connect` can Send and Listen but not Manage. Its connection string is kept
+    in Key Vault only and reaches the container through the script's environment.
+  - The schema history is a file on the `connect-azure-data` volume. It must be kept forever, and
+    Event Hubs Standard keeps at most 7 days.
+  - The connector config `cdc/debezium/sqlserver-connector.azure.json` differs from the local one
+    only in that history setting.
+
+  ```powershell
+  .\scripts\cdc_azure.ps1 -LoadSource                      # SQL Server + Agent must run (admin: Start-Service)
+  python -m data_generators.simulate_oms_changes --events 2000 --tps 20
+  databricks bundle run -t dev scm_streaming               # stream_cdc drains into bronze.orders_cdc
+  .\scripts\cdc_azure.ps1 -Stop
+  ```
 - Silver reads `bronze.orders_cdc` when it exists and falls back to the `bronze.orders` file feed
   otherwise, so the daily pipeline works in an environment without CDC.
 
 ## 6. Known limitations
 
-- Local only end to end; the cloud path is deployed, but no Debezium → Event Hubs run has been done.
+- On Azure, Debezium still runs on the laptop (next to SQL Server), so changes flow only while it runs; changes made meanwhile wait in the CDC change tables (7 days).
 - Schema changes in the source (`include.schema.changes = false`) are not propagated; a new source
   column appears in the raw `after` JSON and needs a Silver change to be used.
 - `SIMPLE` recovery model on the local database is fine for CDC but not for production backups.
