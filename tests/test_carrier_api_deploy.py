@@ -92,9 +92,12 @@ class TestInfrastructure(unittest.TestCase):
         self.assertEqual(ignored, {"ingress[0].transport", "ingress[0].traffic_weight",
                                    "template[0].cooldown_period_in_seconds", "template[0].polling_interval_in_seconds"})
 
-    def test_container_apps_provider_is_registered_as_code(self):
-        self.assertRegex(block(CODE, 'resource "azurerm_resource_provider_registration" "container_apps"'),
-                         r'name\s*=\s*"Microsoft.App"')
+    def test_container_apps_provider_is_registered_but_never_unregistered(self):
+        """Found on Azure: a registration resource unregistered Microsoft.App on destroy, Azure said 409."""
+        providers = strip_comments((INFRA / "providers.tf").read_text(encoding="utf-8"))
+        self.assertRegex(providers, r'resource_providers_to_register\s*=\s*\["Microsoft.App"\]')
+        for tf in INFRA.glob("*.tf"):
+            self.assertNotIn("azurerm_resource_provider_registration", strip_comments(tf.read_text(encoding="utf-8")), tf.name)
 
     def test_pipeline_switch_points_at_the_app_over_https(self):
         out = block(strip_comments(OUTPUTS), 'output "carrier_api_url"')
