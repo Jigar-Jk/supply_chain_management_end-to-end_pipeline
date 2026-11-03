@@ -277,8 +277,10 @@ Mock carrier API ←── GET /v1/shipments?updated_since=<watermark>&cursor=�
 - **Switch.** In `scm_daily_pipeline`, `carrier_api_enabled` (a condition task) runs
   `fetch_carrier_api` only when `carrier_api_url` is set; `ingest_bronze_files` runs with
   `NONE_FAILED`, so it goes ahead when the fetch succeeded or was skipped, but not when it failed.
-  The URL is `disabled` until the mock API runs in Azure, and shipments come from the uploaded file
-  meanwhile.
+  On Azure the mock API runs in Azure Container Apps (`infra/carrier_api.tf`) and the URL is its
+  HTTPS address. `scripts/up.ps1` builds the image with the day's shipments, pushes it to the
+  registry and rolls it out; without Docker it passes `disabled`, and shipments come from the
+  uploaded file instead.
 
 ### 2.7 Where each part runs today
 
@@ -286,8 +288,8 @@ Mock carrier API ←── GET /v1/shipments?updated_since=<watermark>&cursor=�
 |---|---|---|
 | File feeds (orders, shipments, inventory, master data, routes, weather) | Yes | Yes. All dashboard data comes from these feeds |
 | CDC (SQL Server → Debezium → Kafka → Bronze → Silver) | Yes, fully tested | Job and tables deployed. Debezium has never been pointed at Event Hubs, so `orders_cdc` is empty |
-| GPS stream | Yes | Event hub and job deployed. The producer has never been run against Azure, so `last_ping_ts` is NULL |
-| Carrier API (mock API → `scm-ingest-api` → landing) | Yes, tested end to end | Task, key secret and landing write permission deployed; switched off (`carrier_api_url = disabled`) until the mock API runs in Azure |
+| GPS stream | Yes | Yes. `scripts/send_gps.ps1` sends pings to Event Hubs; `scm_streaming` drains them into Bronze |
+| Carrier API (mock API → `scm-ingest-api` → landing) | Yes, tested end to end | Yes. The mock API runs in Azure Container Apps and the daily pipeline fetches shipments from it |
 
 ### 2.8 How Silver chooses the order source
 
@@ -780,9 +782,10 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | `alerts.tf` | Quarantine-rate query and alert per catalog, with run permissions for the pipeline |
 | `wms_sftp.tf` | The WMS SFTP drop: a storage account with SFTP on, container `wms-drop`, local users `wms` and `adf`, their passwords in Key Vault |
 | `adf.tf`, `adf/*.json` | Data Factory: Key Vault, SFTP and data lake connections, datasets, pipeline `copy_wms_inventory`, daily 01:30 UTC trigger, roles (Key Vault secrets, landing only) |
+| `carrier_api.tf` | The mock carrier API: container registry (no admin user), Container Apps environment and app (HTTPS only, one replica, key from the secret above), its identity with AcrPull |
 | `outputs.tf` | Workspace URL, warehouse id, storage name, Event Hubs namespace, alert ids, pipeline client id and the (sensitive) secret |
 
-One `terraform apply` creates 91 resources. The settings for the student subscription are in
+One `terraform apply` creates 99 resources. The settings for the student subscription are in
 `infra/envs/student.tfvars`.
 
 ### 8.2 Session scripts

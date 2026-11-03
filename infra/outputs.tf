@@ -39,9 +39,18 @@ output "quarantine_alert_ids" {
 
 output "carrier_api_url" {
   description = "Bundle variable carrier_api_url: where fetch_carrier_api calls the carrier API; 'disabled' skips it"
-  # No carrier API runs in Azure yet, so the daily pipeline keeps taking shipments from the uploaded
-  # file. Once the mock API is deployed (Azure Container Apps), this becomes its URL.
-  value = "disabled"
+  # The mock API on Azure Container Apps (carrier_api.tf). scripts/up.ps1 passes "disabled" instead
+  # when it cannot roll out the API's image (Docker not running), and shipments come from the file.
+  value = "https://${azurerm_container_app.carrier_api.ingress[0].fqdn}"
+}
+
+output "carrier_api_deploy" {
+  description = "Where scripts/up.ps1 pushes the carrier API image and which Container App it rolls it out to"
+  value = {
+    registry_name = azurerm_container_registry.acr.name
+    login_server  = azurerm_container_registry.acr.login_server
+    app_name      = azurerm_container_app.carrier_api.name
+  }
 }
 
 output "wms_sftp" {
