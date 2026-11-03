@@ -23,7 +23,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from scm_platform.run_log import log_step, run_log_row, stream_rows, utc_now
+from scm_platform.run_log import drain_rows, log_step, run_log_row, utc_now
 
 try:
     from pyspark.sql import DataFrame, SparkSession
@@ -73,6 +73,11 @@ class StreamConfig:
         if self.lake_path:
             return "path", f"{self.lake_path.rstrip('/')}/bronze/{name}"
         raise ValueError("Set catalog (Databricks) or lake_path (local).")
+
+    def history_ref(self, name: str) -> str:
+        """How DESCRIBE HISTORY names a Bronze table: cat.bronze.x or delta.`/lake/bronze/x`."""
+        kind, location = self.target(name)
+        return location if kind == "table" else f"delta.`{location}`"
 
 
 def kafka_options(cfg: StreamConfig, connection_string: Optional[str] = None) -> Dict[str, str]:
@@ -194,8 +199,8 @@ def log_drain(spark: SparkSession, cfg: StreamConfig, bronze_q, dlq_q, run_id: O
     """After an available-now drain: one SUCCESS row for gps_stream (events in Bronze, dead letters)."""
     if not cfg.available_now:
         return False                       # a continuous stream never finishes, so there is no drain to log
-    read, written = stream_rows([bronze_q])
-    _, dead_letters = stream_rows([dlq_q])
+    read, written = drain_rows(spark, [bronze_q], [cfg.history_ref("gps_events")], started)
+    _, dead_letters = drain_rows(spark, [dlq_q], [cfg.history_ref("gps_events_dlq")], started)
     return log_step(spark, cfg.catalog, run_log_row(
         run_id or "stream", "gps_stream", "stream_gps", "bronze", started,
         rows_read=read, rows_written=written, rows_quarantined=dead_letters))

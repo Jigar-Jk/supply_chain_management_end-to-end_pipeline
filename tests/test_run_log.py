@@ -24,9 +24,16 @@ RUN_LOG_COLUMNS = ["run_id", "source_system", "step", "layer", "started_at", "en
 
 
 class FakeSpark:
-    def __init__(self, tables=()):
+    def __init__(self, tables=(), history=None):
         self.tables, self.written = set(tables), []
+        self.history = history or {}               # table ref -> DESCRIBE HISTORY rows (dicts)
         self.catalog = SimpleNamespace(tableExists=lambda name: name in self.tables)
+
+    def sql(self, statement):
+        table = statement.replace("DESCRIBE HISTORY ", "", 1)
+        if table not in self.history:
+            raise RuntimeError(f"no history for {table}")
+        return SimpleNamespace(collect=lambda: self.history[table])
 
     def table(self, name):
         return SimpleNamespace(schema=f"schema of {name}")
@@ -46,6 +53,10 @@ class FakeSpark:
 
 def query(*progress):
     return SimpleNamespace(recentProgress=list(progress))
+
+
+def commit(operation, timestamp, rows):
+    return {"operation": operation, "timestamp": timestamp, "operationMetrics": {"numOutputRows": str(rows)}}
 
 
 class TestRunLogRow(unittest.TestCase):
@@ -112,6 +123,57 @@ class TestStreamDrains(unittest.TestCase):
         values = dict(zip(RUN_LOG_COLUMNS, spark.written[0][2][0]))
         self.assertEqual((values["source_system"], values["run_id"]), ("sqlserver_cdc", "stream"))
         self.assertEqual((values["rows_read"], values["rows_written"], values["rows_quarantined"]), (350, 349, 1))
+
+    def test_sink_without_counts_falls_back_to_the_delta_history(self):
+        """Found on Azure: Databricks' Delta sink reports -1, so 19,955 landed GPS events were logged as 0."""
+        from scm_platform.stream_gps_events import log_drain
+        started = datetime(2026, 11, 3, 9, 0)
+        history = {
+            "cat.bronze.gps_events": [
+                commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 5), 19000),
+                commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 6), 955),
+                commit("STREAMING UPDATE", datetime(2026, 11, 2, 9, 5), 777),     # an earlier drain
+                commit("OPTIMIZE", datetime(2026, 11, 3, 9, 7), 5)],
+            "cat.bronze.gps_events_dlq": [commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 5), 45)],
+        }
+        spark = FakeSpark({"cat.ops.pipeline_run_log"}, history)
+        cfg = StreamConfig(bootstrap_servers="b", catalog="cat", available_now=True)
+        bronze = query({"numInputRows": 20048, "sink": {"numOutputRows": -1}})
+        dlq = query({"numInputRows": 20048, "sink": {"numOutputRows": -1}})
+        log_drain(spark, cfg, bronze, dlq, "r", started)
+        values = dict(zip(RUN_LOG_COLUMNS, spark.written[0][2][0]))
+        self.assertEqual((values["rows_read"], values["rows_written"], values["rows_quarantined"]), (20048, 19955, 45))
+
+    def test_cdc_history_fallback_reads_both_tables(self):
+        from scm_platform.stream_cdc_events import log_drain
+        started = datetime(2026, 11, 3, 9, 0)
+        history = {"cat.bronze.orders_cdc": [commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 1), 300)],
+                   "cat.bronze.inventory_cdc": [commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 1), 49)],
+                   "cat.bronze.cdc_dlq": [commit("STREAMING UPDATE", datetime(2026, 11, 3, 9, 1), 1)]}
+        spark = FakeSpark({"cat.ops.pipeline_run_log"}, history)
+        cfg = StreamConfig(bootstrap_servers="b", catalog="cat", available_now=True)
+        unknown = {"sink": {"numOutputRows": -1}}
+        queries = [query({"numInputRows": 300, **unknown}), query({"numInputRows": 300, **unknown}),
+                   query({"numInputRows": 50, **unknown}), query({"numInputRows": 50, **unknown})]
+        log_drain(spark, cfg, queries, None, started)
+        values = dict(zip(RUN_LOG_COLUMNS, spark.written[0][2][0]))
+        self.assertEqual((values["rows_read"], values["rows_written"], values["rows_quarantined"]), (350, 349, 1))
+
+    def test_unreadable_history_keeps_the_progress_count(self):
+        spark = FakeSpark()
+        q = query({"numInputRows": 10, "sink": {"numOutputRows": -1}})
+        self.assertEqual(run_log.drain_rows(spark, [q], ["cat.bronze.missing"], datetime(2026, 11, 3)), (10, 0))
+
+    def test_aware_history_timestamps_compare_as_utc(self):
+        from datetime import timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        spark = FakeSpark(history={"t": [commit("STREAMING UPDATE", datetime(2026, 11, 3, 14, 35, tzinfo=ist), 7)]})
+        self.assertEqual(run_log.delta_rows_since(spark, ["t"], datetime(2026, 11, 3, 9, 0)), 7)    # 09:05 UTC
+        self.assertEqual(run_log.delta_rows_since(spark, ["t"], datetime(2026, 11, 3, 9, 10)), 0)
+
+    def test_local_lake_tables_are_named_by_path(self):
+        cfg = StreamConfig(bootstrap_servers="b", lake_path="/lake/")
+        self.assertEqual(cfg.history_ref("gps_events"), "delta.`/lake/bronze/gps_events`")
 
     def test_a_continuous_stream_logs_nothing(self):
         from scm_platform.stream_gps_events import log_drain
