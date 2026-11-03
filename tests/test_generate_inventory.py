@@ -143,12 +143,14 @@ class TestInventoryGenerator(unittest.TestCase):
             self.assertEqual(back, expected)              # nulls, negatives, unknown codes all survive the CSV
             self.assertTrue(any(r["warehouse_id"] is None for r in back), "an empty cell must read back as None")
 
-    def test_old_ndjson_exports_are_replaced(self):
+    def test_earlier_exports_are_replaced(self):
+        """Found on Azure: CSVs of an earlier run (other nights) were uploaded along with today's."""
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
             generate_master_data.run(data_dir=data_dir, counts=MASTER_COUNTS, seed=42, bad_rate=0.02)
             (data_dir / "inventory").mkdir()
             (data_dir / "inventory" / "inventory_2026-10-01.jsonl").write_text("{}\n", encoding="utf-8")
+            (data_dir / "inventory" / "inventory_2026-10-02.csv").write_text("old\n", encoding="utf-8")
             run(data_dir=data_dir, nights=1, skus_per_warehouse=5, last_night=date(2026, 10, 12))
             self.assertEqual(sorted(p.name for p in (data_dir / "inventory").iterdir()), ["inventory_2026-10-12.csv"])
 

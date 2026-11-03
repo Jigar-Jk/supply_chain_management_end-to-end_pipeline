@@ -4,7 +4,9 @@
 # The carrier API step is switched by var.carrier_api_url:
 #   carrier_api_enabled   condition task: is a URL set (not "disabled")?
 #   fetch_carrier_api     only on "true": new shipments from the API into landing/shipments/
-#   ingest_bronze_files   NONE_FAILED: runs when the fetch succeeded or was skipped, not when it failed,
+#   ingest_bronze_files   depends on the condition's "false" branch and on the fetch, with NONE_FAILED:
+#                         switch off -> the "false" branch ran, the fetch was skipped -> runs;
+#                         switch on  -> the fetch ran: succeeded -> runs, failed -> does not,
 #                         so a broken API run never lets Bronze go ahead with half the shipments
 # While the URL is "disabled", shipments come from the file scripts/up.ps1 uploads, as before.
 resources:
@@ -65,6 +67,7 @@ resources:
         - task_key: ingest_bronze_files
           depends_on:
             - task_key: carrier_api_enabled
+              outcome: "false"                 # Databricks requires an outcome on every condition dependency
             - task_key: fetch_carrier_api
           run_if: NONE_FAILED
           job_cluster_key: batch_compute

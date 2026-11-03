@@ -258,7 +258,9 @@ def run(
 
     out_dir = data_dir / "inventory"
     out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("inventory_*.jsonl"):        # earlier NDJSON exports of this generator
+    # Earlier exports of this generator (other nights, or the old NDJSON format): a run replaces them,
+    # so uploads never carry stale nights along
+    for old in [*out_dir.glob("inventory_*.jsonl"), *out_dir.glob("inventory_*.csv")]:
         old.unlink()
     handles = {n.isoformat(): open(out_dir / f"inventory_{n.isoformat()}.csv", "w", newline="", encoding="utf-8")
                for n in night_list}
