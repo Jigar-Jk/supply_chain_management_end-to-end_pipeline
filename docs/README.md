@@ -13,7 +13,7 @@ Start with the project guide; the other pages go deeper into one topic each.
 ## Diagrams
 
 Editable diagrams (draw.io) and their exports live next to the pages that use them:
-[architecture.drawio](architecture.drawio), [full_architecture.drawio](full_architecture.drawio),
+[full_architecture.drawio](full_architecture.drawio) (the main architecture diagram),
 [data_model.drawio](data_model.drawio), `data_model_galaxy.png`, `data_model_ops.png`, and the
 icons in [icons/](icons/).
 

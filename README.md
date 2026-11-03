@@ -43,7 +43,7 @@ Four ingestion patterns, one quality gate:
 | Streaming | Truck GPS pings, pallet RFID scans | Kafka / Event Hubs → Structured Streaming |
 
 Diagrams: [docs/architecture.md](docs/architecture.md) (flow, quarantine lifecycle, CDC path,
-deployment) · editable slides version: [docs/architecture.drawio](docs/architecture.drawio).
+deployment) · editable slides version: [docs/full_architecture.drawio](docs/full_architecture.drawio).
 
 ## Data model
 
