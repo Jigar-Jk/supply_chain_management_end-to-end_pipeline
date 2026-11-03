@@ -15,7 +15,7 @@ Logging never breaks a job: without the table (local runs into a lake path, unit
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -60,4 +60,38 @@ def stream_rows(queries: Iterable[Any]) -> Tuple[int, int]:
             read += int(progress.get("numInputRows") or 0)
             out = (progress.get("sink") or {}).get("numOutputRows", -1)
             written += int(out) if out is not None and int(out) >= 0 else 0
+    return read, written
+
+
+def delta_rows_since(spark: Any, tables: List[str], since: datetime) -> Optional[int]:
+    """Rows the streaming commits since `since` appended to these Delta tables, from their history.
+
+    The fallback for stream_rows: on Databricks the Delta sink reports numOutputRows -1 in the query
+    progress (found on Azure: 19,955 GPS events landed, the run log said 0 written). A table is a
+    name (cat.schema.table) or delta.`/path`. None when a history cannot be read.
+    """
+    total = 0
+    for table in tables:
+        try:
+            history = spark.sql(f"DESCRIBE HISTORY {table}").collect()
+        except Exception as exc:                       # logging never breaks a job
+            log.warning("history of %s not readable (%s); rows written unknown", table, exc)
+            return None
+        for commit in history:
+            stamp = commit["timestamp"]
+            stamp = stamp.astimezone(timezone.utc).replace(tzinfo=None) if stamp.tzinfo else stamp
+            if commit["operation"] == "STREAMING UPDATE" and stamp >= since:
+                total += int((commit["operationMetrics"] or {}).get("numOutputRows") or 0)
+    return total
+
+
+def drain_rows(spark: Any, queries: Iterable[Any], tables: List[str], since: datetime) -> Tuple[int, int]:
+    """(rows read, rows written) of a finished drain: the query progress, or, when its sink did not
+    report what it wrote, the Delta history of the tables it wrote to."""
+    queries = list(queries)
+    read, written = stream_rows(queries)
+    if written == 0 and read > 0:
+        from_history = delta_rows_since(spark, tables, since)
+        if from_history is not None:
+            written = from_history
     return read, written

@@ -747,7 +747,10 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 ### 7.5 Audit and lineage
 
 - **Audit queries** in `dashboards/governance/` cover table reads, denied access and permission
-  changes, read from `system.access.audit`. They are tested against a fake audit view.
+  changes, read from `system.access.audit`. They are tested against a fake audit view. Live, they
+  need `USE SCHEMA` and `SELECT` on `system.access`, which only an account (metastore) admin can
+  grant: the student workspace's metastore was created by Azure and is owned by another principal,
+  so a workspace admin gets `INSUFFICIENT_PERMISSIONS` there.
 - **Unity Catalog lineage** shows the table and column flow automatically: Bronze → Silver → Gold →
   dashboard.
 - **Row-level lineage** comes from `_source_file`, `_batch_id`, `source_position`, the Kafka offsets
@@ -954,19 +957,21 @@ build ──→ dev ───────────────────→
 - CDC end to end locally: snapshot, live changes, restart recovery, stale replay, and a
   reconciliation of 60,000 rows.
 - About 2% quarantined per feed, matching the generator manifests.
+- Live on Azure (3 Nov):
+  - GPS: 20,048 messages into Event Hubs; 19,955 events in Bronze, 45 dead letters (unparseable),
+    48 duplicates dropped;
+  - the SLA tile is GREEN for all four sources;
+  - all 452 in-transit shipments have a last ping, and 35 trucks are dark (more than 2 hours stale);
+  - the carrier API on Container Apps: `fetch_carrier_api` read 17,889 shipments in 18 pages,
+    retrying the 429s, and moved the watermark;
+  - grants as designed (pipeline: ALL PRIVILEGES; analyst: USE CATALOG and Gold SELECT);
+  - customer names and carrier e-mails masked for a user outside `pii_readers`.
 
 ### 11.2 Open items
 
-- Jobs write SUCCESS to `ops.pipeline_run_log` (fixes the red SLA tile).
-- Split the dashboard in two:
-  - a business Control Tower with `embed_credentials: true`, and a test that it never reads the PII
-    views;
-  - a separate Data Quality monitor.
-
-  The dashboard permissions also go into code.
 - A Genie space as code, then live testing.
-- Live governance checks: `SHOW GRANTS`, masking on and off, audit queries on the system tables.
-- CDC and GPS on Azure: point Debezium and the GPS producer at Event Hubs.
+- Audit tiles live: an account admin grants `system.access` (see 7.5).
+- CDC on Azure: Event Hubs topics for Debezium (2 CDC + 3 Kafka Connect) and an azure profile.
 - Smaller hardening:
   - DLQ monitoring;
   - a CDC freshness alert;

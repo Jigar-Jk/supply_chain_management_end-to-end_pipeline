@@ -37,7 +37,7 @@ except ImportError:
     DataFrame = Any  # type: ignore
     SparkSession = Any  # type: ignore
 
-from scm_platform.run_log import log_step, run_log_row, stream_rows, utc_now
+from scm_platform.run_log import drain_rows, log_step, run_log_row, utc_now
 from scm_platform.stream_gps_events import StreamConfig, kafka_options, write_stream
 
 TOPIC_PREFIX = "scm.scm_oms.dbo"
@@ -169,8 +169,8 @@ def log_drain(spark: SparkSession, cfg: StreamConfig, queries, run_id: Optional[
         return False                       # a continuous stream never finishes, so there is no drain to log
     events = [q for i, q in enumerate(queries) if i % 2 == 0]       # start_cdc_streams: events, dead letters, ...
     dead_letters = [q for i, q in enumerate(queries) if i % 2 == 1]
-    read, written = stream_rows(events)
-    _, quarantined = stream_rows(dead_letters)
+    read, written = drain_rows(spark, events, [cfg.history_ref(t) for t in CDC_TABLES.values()], started)
+    _, quarantined = drain_rows(spark, dead_letters, [cfg.history_ref(DLQ_TABLE)], started)
     return log_step(spark, cfg.catalog, run_log_row(
         run_id or "stream", SOURCE_SYSTEM, "stream_cdc", "bronze", started,
         rows_read=read, rows_written=written, rows_quarantined=quarantined))
