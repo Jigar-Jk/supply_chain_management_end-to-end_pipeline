@@ -1,0 +1,6 @@
+# Build context is the repo root: send only what the Dockerfile copies (no .env, state, or other data)
+*
+!services/__init__.py
+!services/carrier_api/__init__.py
+!services/carrier_api/app.py
+!data/shipments/shipments.jsonl

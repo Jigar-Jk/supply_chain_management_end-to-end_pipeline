@@ -71,6 +71,20 @@ $alertId = $out.quarantine_alert_ids.value.$Target           # the 5 % quarantin
 if (-not $alertId) { throw "No quarantine alert for target '$Target' in the terraform outputs." }
 # Where the daily pipeline pulls shipments from the carrier API; "disabled": from the uploaded file
 $carrierApi = if ($out.carrier_api_url) { $out.carrier_api_url.value } else { "disabled" }
+# The API runs in Azure Container Apps, but its image (with today's shipments) is built here (step 6b):
+# no Docker, or no data to put in it -> the API stays off for this session and the file is uploaded
+$carrierDeploy = if ($out.carrier_api_deploy) { $out.carrier_api_deploy.value } else { $null }
+if ($carrierApi -ne "disabled") {
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Docker is not running - carrier API off this session (shipments come from the file). Start Docker Desktop and re-run to switch it on."
+        $carrierApi = "disabled"
+    } elseif ($SkipData -and -not (Test-Path (Join-Path $repo "data\shipments\shipments.jsonl"))) {
+        Write-Warning "No data\shipments\shipments.jsonl for the carrier API image - carrier API off this session."
+        $carrierApi = "disabled"
+    }
+}
+$rg = $out.resource_group.value
 # The WMS SFTP drop and the Data Factory that copies from it (infra/wms_sftp.tf, infra/adf.tf)
 $wmsSftp = if ($out.wms_sftp) { $out.wms_sftp.value } else { $null }
 $adf = if ($out.data_factory_name) { $out.data_factory_name.value } else { $null }
@@ -144,7 +158,32 @@ if (-not $SkipData) {
         python -m data_generators.generate_shipments --reference-time $ref; Check "shipments"
         python -m data_generators.generate_inventory --last-night $now.ToString("yyyy-MM-dd"); Check "inventory"
     } finally { Pop-Location }
+}
 
+# ------------------------------------------------------------------ 6b. carrier API image
+# Today's shipments go into the image, the image into the registry, and the Container App rolls it
+# out; the pipeline then fetches shipments from https://<app>/v1/shipments instead of a file.
+if ($carrierApi -ne "disabled") {
+    Step "Carrier API: image with today's shipments -> $($carrierDeploy.login_server) -> $($carrierDeploy.app_name)"
+    $image = "$($carrierDeploy.login_server)/carrier-api:$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))"
+    az acr login --name $carrierDeploy.registry_name --only-show-errors; Check "az acr login"
+    docker build -q -f (Join-Path $repo "services\carrier_api\Dockerfile") -t $image $repo; Check "docker build"
+    docker push -q $image; Check "docker push"
+    # Terraform rolls the image out (the app's only change; -target keeps it to that one resource).
+    # Not `az containerapp update`: it rewrote the app's settings and dropped the registry identity.
+    terraform "-chdir=$infra" apply "-var-file=$tfvars" "-var=carrier_api_image=$image" `
+        -target=azurerm_container_app.carrier_api -input=false -auto-approve -no-color | Select-String "Apply complete"
+    Check "terraform apply (carrier API image)"
+    # Wait until the new revision answers with the shipments (the placeholder has no /health)
+    for ($i = 1; ; $i++) {
+        try { $health = Invoke-RestMethod "$carrierApi/health" -TimeoutSec 10 } catch { $health = $null }
+        if ($health.status -eq "ok") { Write-Host "    $carrierApi is up, serving $($health.shipments) shipments"; break }
+        if ($i -ge 30) { throw "The carrier API did not come up at $carrierApi/health within 5 minutes." }
+        Start-Sleep -Seconds 10
+    }
+}
+
+if (-not $SkipData) {
     Step "Uploading to the landing container"
     $feeds = "routes", "weather", "shipments", "warehouses", "products", "customers", "carriers", "orders", "inventory"
     # With the carrier API on, the pipeline fetches shipments itself; uploading the file too would land them twice
@@ -178,7 +217,6 @@ if (-not $SkipData) {
         Step "Data Factory copies it into landing (copy_wms_inventory, started now instead of at 01:30)"
         az extension show --name datafactory -o none 2>$null
         if ($LASTEXITCODE -ne 0) { az extension add --name datafactory --only-show-errors; Check "az extension add datafactory" }
-        $rg = $out.resource_group.value
         $runId = az datafactory pipeline create-run --factory-name $adf --resource-group $rg --name copy_wms_inventory --query runId -o tsv
         Check "starting the Data Factory pipeline"
         for ($i = 1; $i -le 60; $i++) {

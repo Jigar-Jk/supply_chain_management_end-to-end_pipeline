@@ -23,6 +23,20 @@ uvicorn services.carrier_api.app:create_app --factory --port 8080
 
 The data is read once when the app starts, so restart it after regenerating the shipments.
 
+## On Azure
+
+`infra/carrier_api.tf` runs it in Azure Container Apps (HTTPS, one replica). `scripts/up.ps1` builds the
+image from `Dockerfile` right after generating the day's data, pushes it to the registry and rolls it
+out with `terraform apply -var carrier_api_image=<image>`; the daily pipeline's `fetch_carrier_api`
+then calls it. Any other `terraform apply` puts the placeholder image back, so run `up.ps1` (or that
+apply) again afterwards. Docker is
+needed only for that build (a few minutes); without it, the session runs with the API off.
+
+```powershell
+docker build -f services/carrier_api/Dockerfile -t carrier-api:local .
+docker run --rm -p 8080:80 -e CARRIER_API_KEY=local-dev-key carrier-api:local
+```
+
 ## API
 
 `GET /v1/shipments` with the header `X-API-Key: <key>`
