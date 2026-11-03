@@ -46,7 +46,8 @@ resources:
             package_name: scm_platform
             entry_point: scm-stream-gps
             parameters: ["--bootstrap", "${var.kafka_bootstrap}", "--catalog", "${var.catalog}",
-                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/gps", "--available-now"]
+                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/gps", "--available-now",
+                         "--run-id", "{{job.run_id}}"]
           libraries:
             - whl: ../../dist/*.whl
 
@@ -58,7 +59,8 @@ resources:
             package_name: scm_platform
             entry_point: scm-stream-cdc
             parameters: ["--bootstrap", "${var.kafka_bootstrap}", "--catalog", "${var.catalog}",
-                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/cdc", "--available-now"]
+                         "--checkpoint-root", "/Volumes/${var.catalog}/ops/checkpoints/cdc", "--available-now",
+                         "--run-id", "{{job.run_id}}"]
           libraries:
             - whl: ../../dist/*.whl
 

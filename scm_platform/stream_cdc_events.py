@@ -37,6 +37,7 @@ except ImportError:
     DataFrame = Any  # type: ignore
     SparkSession = Any  # type: ignore
 
+from scm_platform.run_log import log_step, run_log_row, stream_rows, utc_now
 from scm_platform.stream_gps_events import StreamConfig, kafka_options, write_stream
 
 TOPIC_PREFIX = "scm.scm_oms.dbo"
@@ -145,6 +146,7 @@ def main() -> None:
     parser.add_argument("--lake-path", default=None, help="Local: root folder for Delta tables")
     parser.add_argument("--checkpoint-root", default=None)
     parser.add_argument("--available-now", action="store_true", help="Process what is available, then stop")
+    parser.add_argument("--run-id", default=None, help="Job run id for ops.pipeline_run_log ({{job.run_id}})")
     args, _ = parser.parse_known_args()
 
     root = args.checkpoint_root or (f"{args.lake_path.rstrip('/')}/_checkpoints" if args.lake_path else None)
@@ -154,8 +156,24 @@ def main() -> None:
                        lake_path=args.lake_path, available_now=args.available_now)
 
     spark = SparkSession.builder.appName("stream_cdc_events").getOrCreate()
-    for query in start_cdc_streams(spark, cfg, os.environ.get("EVENTHUB_CONNECTION_STRING")):
+    started = utc_now()
+    queries = start_cdc_streams(spark, cfg, os.environ.get("EVENTHUB_CONNECTION_STRING"))
+    for query in queries:
         query.awaitTermination()
+    log_drain(spark, cfg, queries, args.run_id, started)
+
+
+def log_drain(spark: SparkSession, cfg: StreamConfig, queries, run_id: Optional[str], started) -> bool:
+    """After an available-now drain: one SUCCESS row for sqlserver_cdc (events in Bronze, dead letters)."""
+    if not cfg.available_now:
+        return False                       # a continuous stream never finishes, so there is no drain to log
+    events = [q for i, q in enumerate(queries) if i % 2 == 0]       # start_cdc_streams: events, dead letters, ...
+    dead_letters = [q for i, q in enumerate(queries) if i % 2 == 1]
+    read, written = stream_rows(events)
+    _, quarantined = stream_rows(dead_letters)
+    return log_step(spark, cfg.catalog, run_log_row(
+        run_id or "stream", SOURCE_SYSTEM, "stream_cdc", "bronze", started,
+        rows_read=read, rows_written=written, rows_quarantined=quarantined))
 
 
 if __name__ == "__main__":

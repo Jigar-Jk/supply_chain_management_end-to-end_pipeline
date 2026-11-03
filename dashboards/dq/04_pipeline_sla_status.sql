@@ -1,8 +1,11 @@
 -- DQ tile 4: pipeline SLA status per source (GREEN / AMBER / RED).
+-- A batch source (expected_by_time set: one file a day) may be up to a day plus max_lag_minutes old;
+-- a streaming source only max_lag_minutes. allowed_lag_minutes is that limit.
 -- RED   : an SLA miss or a file rejected for schema drift was logged in the last 24 hours,
---         or no successful run within 2 x max_lag_minutes
--- AMBER : last successful run older than max_lag_minutes
+--         or no successful run within allowed_lag_minutes + max_lag_minutes
+-- AMBER : last successful run older than allowed_lag_minutes
 -- GREEN : otherwise
+-- Successful runs are logged by the jobs (scm_platform/run_log.py): Silver per fact, streaming per drain.
 WITH last_success AS (
   SELECT source_system, max(ended_at) AS last_success
   FROM ops.pipeline_run_log
@@ -20,6 +23,7 @@ lag AS (
     c.source_system,
     c.expected_by_time,
     c.max_lag_minutes,
+    CASE WHEN c.expected_by_time IS NOT NULL THEN 1440 ELSE 0 END + c.max_lag_minutes AS allowed_lag_minutes,
     l.last_success,
     m.last_sla_miss,
     m.miss_message,
@@ -32,13 +36,14 @@ SELECT
   source_system,
   expected_by_time,
   max_lag_minutes,
+  allowed_lag_minutes,
   last_success,
   minutes_since_success,
   last_sla_miss,
   miss_message,
   CASE WHEN last_sla_miss IS NOT NULL
          OR last_success IS NULL
-         OR minutes_since_success > 2 * max_lag_minutes THEN 'RED'
-       WHEN minutes_since_success > max_lag_minutes     THEN 'AMBER'
-       ELSE 'GREEN' END                                  AS sla_status
+         OR minutes_since_success > allowed_lag_minutes + max_lag_minutes THEN 'RED'
+       WHEN minutes_since_success > allowed_lag_minutes                  THEN 'AMBER'
+       ELSE 'GREEN' END                                                 AS sla_status
 FROM lag

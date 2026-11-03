@@ -160,6 +160,7 @@
                 "    c.source_system,\n",
                 "    c.expected_by_time,\n",
                 "    c.max_lag_minutes,\n",
+                "    CASE WHEN c.expected_by_time IS NOT NULL THEN 1440 ELSE 0 END + c.max_lag_minutes AS allowed_lag_minutes,\n",
                 "    l.last_success,\n",
                 "    m.last_sla_miss,\n",
                 "    m.miss_message,\n",
@@ -172,15 +173,16 @@
                 "  source_system,\n",
                 "  expected_by_time,\n",
                 "  max_lag_minutes,\n",
+                "  allowed_lag_minutes,\n",
                 "  last_success,\n",
                 "  minutes_since_success,\n",
                 "  last_sla_miss,\n",
                 "  miss_message,\n",
                 "  CASE WHEN last_sla_miss IS NOT NULL\n",
                 "         OR last_success IS NULL\n",
-                "         OR minutes_since_success > 2 * max_lag_minutes THEN 'RED'\n",
-                "       WHEN minutes_since_success > max_lag_minutes     THEN 'AMBER'\n",
-                "       ELSE 'GREEN' END                                  AS sla_status\n",
+                "         OR minutes_since_success > allowed_lag_minutes + max_lag_minutes THEN 'RED'\n",
+                "       WHEN minutes_since_success > allowed_lag_minutes                  THEN 'AMBER'\n",
+                "       ELSE 'GREEN' END                                                 AS sla_status\n",
                 "FROM lag\n"
             ]
         }
@@ -673,8 +675,8 @@
                                             "expression": "`minutes_since_success`"
                                         },
                                         {
-                                            "name": "max_lag_minutes",
-                                            "expression": "`max_lag_minutes`"
+                                            "name": "allowed_lag_minutes",
+                                            "expression": "`allowed_lag_minutes`"
                                         },
                                         {
                                             "name": "last_success",
@@ -707,7 +709,7 @@
                                         "displayName": "Minutes since success"
                                     },
                                     {
-                                        "fieldName": "max_lag_minutes",
+                                        "fieldName": "allowed_lag_minutes",
                                         "displayName": "Allowed lag (min)"
                                     },
                                     {
