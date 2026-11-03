@@ -18,11 +18,6 @@
 # The API key is the one Databricks already has (secrets.tf).
 # Consumption plan, no VM cores (the 6-core student quota is untouched); destroyed with the stack.
 
-# Container Apps is not among the providers Terraform registers by itself on this subscription
-resource "azurerm_resource_provider_registration" "container_apps" {
-  name = "Microsoft.App"
-}
-
 resource "azurerm_container_registry" "acr" {
   name                = "acr${replace(local.base, "-", "")}"
   resource_group_name = azurerm_resource_group.rg.name
@@ -67,7 +62,6 @@ resource "azurerm_container_app_environment" "cae" {
     workload_profile_type = "Consumption"
   }
 
-  depends_on = [azurerm_resource_provider_registration.container_apps]
 }
 
 resource "azurerm_container_app" "carrier_api" {
