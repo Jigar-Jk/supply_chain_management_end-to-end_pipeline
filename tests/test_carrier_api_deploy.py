@@ -86,7 +86,11 @@ class TestInfrastructure(unittest.TestCase):
         variables = (INFRA / "variables.tf").read_text(encoding="utf-8")
         self.assertIn('default     = "mcr.microsoft.com/k8se/quickstart:latest"',
                       block(variables, 'variable "carrier_api_image"'))
-        self.assertNotIn("ignore_changes", APP)
+
+    def test_only_express_managed_settings_are_ignored(self):
+        ignored = set(re.findall(r"(\w+\[0\]\.\w+)", re.search(r"ignore_changes\s*=\s*\[(.*?)\n\s*\]", APP, re.S).group(1)))
+        self.assertEqual(ignored, {"ingress[0].transport", "ingress[0].traffic_weight",
+                                   "template[0].cooldown_period_in_seconds", "template[0].polling_interval_in_seconds"})
 
     def test_container_apps_provider_is_registered_as_code(self):
         self.assertRegex(block(CODE, 'resource "azurerm_resource_provider_registration" "container_apps"'),

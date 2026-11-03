@@ -122,4 +122,15 @@ resource "azurerm_container_app" "carrier_api" {
       }
     }
   }
+
+  # Express manages these itself (it reports transport "http", no traffic split and 0 s scale timers),
+  # so without this every plan would show the same change again
+  lifecycle {
+    ignore_changes = [
+      ingress[0].transport,
+      ingress[0].traffic_weight,
+      template[0].cooldown_period_in_seconds,
+      template[0].polling_interval_in_seconds,
+    ]
+  }
 }
