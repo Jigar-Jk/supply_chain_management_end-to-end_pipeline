@@ -48,14 +48,21 @@ class TestInfrastructure(unittest.TestCase):
     def test_registry_has_no_admin_password(self):
         self.assertRegex(block(CODE, 'resource "azurerm_container_registry" "acr"'), r"admin_enabled\s*=\s*false")
 
-    def test_app_pulls_with_its_own_identity(self):
-        pull = block(CODE, 'resource "azurerm_role_assignment" "carrier_api_acr_pull"')
-        self.assertIn('"AcrPull"', pull)
-        self.assertIn("azurerm_container_registry.acr.id", pull)
-        self.assertIn("azurerm_user_assigned_identity.carrier_api.principal_id", pull)
+    def test_app_pulls_with_a_read_only_token_for_its_repository(self):
+        scope = block(CODE, 'resource "azurerm_container_registry_scope_map" "carrier_api_pull"')
+        actions = set(re.findall(r'"(repositories/[^"]+)"', scope))
+        self.assertEqual(actions, {"repositories/carrier-api/content/read", "repositories/carrier-api/metadata/read"})
         registry = block(APP, "registry {")
-        self.assertIn("identity = azurerm_user_assigned_identity.carrier_api.id", re.sub(r"\s+", " ", registry))
-        self.assertNotIn("password", registry)
+        self.assertIn("azurerm_container_registry_token.carrier_api_pull.name", registry)
+        self.assertRegex(registry, r'password_secret_name\s*=\s*"acr-pull-token"')
+        self.assertIn("azurerm_container_registry_token_password.carrier_api_pull.password1[0].value", APP)
+
+    def test_no_token_password_or_key_in_outputs(self):
+        code = strip_comments(OUTPUTS)
+        for name in ("carrier_api_url", "carrier_api_deploy"):
+            body = block(code, f'output "{name}"')
+            self.assertNotIn("password", body)
+            self.assertNotIn("random_password", body)
 
     def test_https_only_and_reachable_from_databricks(self):
         ingress = block(APP, "ingress {")
@@ -64,7 +71,7 @@ class TestInfrastructure(unittest.TestCase):
         self.assertRegex(ingress, r"target_port\s*=\s*80\b")
 
     def test_key_is_the_one_databricks_has_and_only_a_secret_reference_in_env(self):
-        self.assertIn("random_password.carrier_api_key.result", block(APP, "secret {"))
+        self.assertIn("random_password.carrier_api_key.result", APP)
         env = block(APP, "env {")
         self.assertIn('"CARRIER_API_KEY"', env)
         self.assertRegex(env, r'secret_name\s*=\s*"carrier-api-key"')
@@ -74,8 +81,12 @@ class TestInfrastructure(unittest.TestCase):
         self.assertRegex(APP, r"min_replicas\s*=\s*1")
         self.assertRegex(APP, r"max_replicas\s*=\s*1")
 
-    def test_terraform_leaves_the_image_to_up_ps1(self):
-        self.assertIn("ignore_changes = [template[0].container[0].image]", APP)
+    def test_image_is_a_variable_with_a_public_placeholder(self):
+        self.assertRegex(APP, r"image\s*=\s*var\.carrier_api_image")
+        variables = (INFRA / "variables.tf").read_text(encoding="utf-8")
+        self.assertIn('default     = "mcr.microsoft.com/k8se/quickstart:latest"',
+                      block(variables, 'variable "carrier_api_image"'))
+        self.assertNotIn("ignore_changes", APP)
 
     def test_container_apps_provider_is_registered_as_code(self):
         self.assertRegex(block(CODE, 'resource "azurerm_resource_provider_registration" "container_apps"'),
@@ -115,7 +126,14 @@ class TestUpScript(unittest.TestCase):
 
     def test_image_is_built_after_the_shipments_are_generated(self):
         self.assertLess(UP.index("generate_shipments"), UP.index("docker build"))
-        self.assertLess(UP.index("docker push"), UP.index("az containerapp update"))
+        self.assertLess(UP.index("docker push"), UP.index('"-var=carrier_api_image=$image"'))
+
+    def test_image_rolled_out_by_terraform_not_az_containerapp(self):
+        """Found on Azure: `az containerapp update` dropped the registry identity and the pull failed."""
+        code = re.sub(r"#.*", "", UP)
+        self.assertNotIn("az containerapp update", code)
+        rollout = code[code.index('"-var=carrier_api_image=$image"'):]
+        self.assertIn("-target=azurerm_container_app.carrier_api", rollout[:300])
 
     def test_api_off_without_docker(self):
         check = UP[UP.index("docker info"):UP.index("$rg = $out.resource_group.value")]

@@ -31,3 +31,9 @@ variable "serverless_sql_warehouse" {
   type        = bool
   default     = true
 }
+
+variable "carrier_api_image" {
+  description = "Image the carrier API Container App runs. scripts/up.ps1 sets it to the session's image (registry/carrier-api:<tag>) after pushing it; the default is a public placeholder"
+  type        = string
+  default     = "mcr.microsoft.com/k8se/quickstart:latest"
+}

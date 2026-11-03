@@ -169,10 +169,11 @@ if ($carrierApi -ne "disabled") {
     az acr login --name $carrierDeploy.registry_name --only-show-errors; Check "az acr login"
     docker build -q -f (Join-Path $repo "services\carrier_api\Dockerfile") -t $image $repo; Check "docker build"
     docker push -q $image; Check "docker push"
-    az extension show --name containerapp -o none 2>$null
-    if ($LASTEXITCODE -ne 0) { az extension add --name containerapp --only-show-errors; Check "az extension add containerapp" }
-    az containerapp update --name $carrierDeploy.app_name --resource-group $rg --image $image -o none --only-show-errors
-    Check "az containerapp update"
+    # Terraform rolls the image out (the app's only change; -target keeps it to that one resource).
+    # Not `az containerapp update`: it rewrote the app's settings and dropped the registry identity.
+    terraform "-chdir=$infra" apply "-var-file=$tfvars" "-var=carrier_api_image=$image" `
+        -target=azurerm_container_app.carrier_api -input=false -auto-approve -no-color | Select-String "Apply complete"
+    Check "terraform apply (carrier API image)"
     # Wait until the new revision answers with the shipments (the placeholder has no /health)
     for ($i = 1; ; $i++) {
         try { $health = Invoke-RestMethod "$carrierApi/health" -TimeoutSec 10 } catch { $health = $null }

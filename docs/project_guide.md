@@ -782,10 +782,10 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | `alerts.tf` | Quarantine-rate query and alert per catalog, with run permissions for the pipeline |
 | `wms_sftp.tf` | The WMS SFTP drop: a storage account with SFTP on, container `wms-drop`, local users `wms` and `adf`, their passwords in Key Vault |
 | `adf.tf`, `adf/*.json` | Data Factory: Key Vault, SFTP and data lake connections, datasets, pipeline `copy_wms_inventory`, daily 01:30 UTC trigger, roles (Key Vault secrets, landing only) |
-| `carrier_api.tf` | The mock carrier API: container registry (no admin user), Container Apps environment and app (HTTPS only, one replica, key from the secret above), its identity with AcrPull |
+| `carrier_api.tf` | The mock carrier API: container registry (no admin user) with a pull-only token for one repository, Container Apps environment and app (HTTPS only, one replica, key from the secret above) |
 | `outputs.tf` | Workspace URL, warehouse id, storage name, Event Hubs namespace, alert ids, pipeline client id and the (sensitive) secret |
 
-One `terraform apply` creates 99 resources. The settings for the student subscription are in
+One `terraform apply` creates 100 resources. The settings for the student subscription are in
 `infra/envs/student.tfvars`.
 
 ### 8.2 Session scripts

@@ -2,13 +2,20 @@
 # fetch_carrier_api task calls a real HTTPS endpoint, as it would a carrier's (DHL, FedEx, ...).
 #
 #   scripts/up.ps1 -> docker build (today's shipments in the image) -> push to this registry
-#                  -> az containerapp update --image   (the app below then pulls it)
+#                  -> terraform apply -var carrier_api_image=<that image>   (the app below pulls it)
 #   Databricks fetch_carrier_api -> https://<fqdn>/v1/shipments with X-API-Key
 #
-# Terraform owns everything but the image tag: the app is created with a public placeholder image and
-# up.ps1 rolls out each session's image (ignore_changes below), the way an app pipeline deploys onto
-# infrastructure. No passwords: the registry admin user is off and the app pulls with its own
-# managed identity (AcrPull). The API key is the one Databricks already has (secrets.tf).
+# The first apply creates the app with a public placeholder image (var.carrier_api_image's default):
+# the session's image does not exist yet then, its data is generated later. up.ps1 then applies the
+# app again with the image it pushed (not `az containerapp update`, a preview CLI extension that
+# rewrote the app's other settings).
+#
+# Registry access: the admin user is off; the app pulls with a token that may only read the
+# carrier-api repository (its password generated here, held only as a Container App secret). Not a
+# managed identity: Azure creates the environment in "Express" mode on this subscription, and Express
+# cannot pull with one (found on Azure: "Authentication failed" with a user-assigned identity,
+# ExpressRegistrySystemIdentityNotSupported with the system one).
+# The API key is the one Databricks already has (secrets.tf).
 # Consumption plan, no VM cores (the 6-core student quota is untouched); destroyed with the stack.
 
 # Container Apps is not among the providers Terraform registers by itself on this subscription
@@ -25,17 +32,27 @@ resource "azurerm_container_registry" "acr" {
   tags                = local.tags
 }
 
-resource "azurerm_user_assigned_identity" "carrier_api" {
-  name                = "id-carrier-api-${local.base}"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
-  tags                = local.tags
+# Pull-only, one repository: the token cannot push, delete or read any other image
+resource "azurerm_container_registry_scope_map" "carrier_api_pull" {
+  name                    = "carrier-api-pull"
+  container_registry_name = azurerm_container_registry.acr.name
+  resource_group_name     = azurerm_resource_group.rg.name
+  actions = [
+    "repositories/carrier-api/content/read",
+    "repositories/carrier-api/metadata/read",
+  ]
 }
 
-resource "azurerm_role_assignment" "carrier_api_acr_pull" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_user_assigned_identity.carrier_api.principal_id
+resource "azurerm_container_registry_token" "carrier_api_pull" {
+  name                    = "carrier-api-pull"
+  container_registry_name = azurerm_container_registry.acr.name
+  resource_group_name     = azurerm_resource_group.rg.name
+  scope_map_id            = azurerm_container_registry_scope_map.carrier_api_pull.id
+}
+
+resource "azurerm_container_registry_token_password" "carrier_api_pull" {
+  container_registry_token_id = azurerm_container_registry_token.carrier_api_pull.id
+  password1 {}
 }
 
 resource "azurerm_container_app_environment" "cae" {
@@ -43,7 +60,14 @@ resource "azurerm_container_app_environment" "cae" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
   tags                = local.tags
-  depends_on          = [azurerm_resource_provider_registration.container_apps]
+
+  # Azure reports this profile on the environment anyway; declaring it keeps plans free of drift
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }
+
+  depends_on = [azurerm_resource_provider_registration.container_apps]
 }
 
 resource "azurerm_container_app" "carrier_api" {
@@ -51,16 +75,18 @@ resource "azurerm_container_app" "carrier_api" {
   resource_group_name          = azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.cae.id
   revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
   tags                         = local.tags
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.carrier_api.id]
+  registry {
+    server               = azurerm_container_registry.acr.login_server
+    username             = azurerm_container_registry_token.carrier_api_pull.name
+    password_secret_name = "acr-pull-token"
   }
 
-  registry {
-    server   = azurerm_container_registry.acr.login_server
-    identity = azurerm_user_assigned_identity.carrier_api.id
+  secret {
+    name  = "acr-pull-token"
+    value = azurerm_container_registry_token_password.carrier_api_pull.password1[0].value
   }
 
   secret {
@@ -86,7 +112,7 @@ resource "azurerm_container_app" "carrier_api" {
 
     container {
       name   = "carrier-api"
-      image  = "mcr.microsoft.com/k8se/quickstart:latest" # placeholder until up.ps1 rolls out the real image
+      image  = var.carrier_api_image
       cpu    = 0.25
       memory = "0.5Gi"
 
@@ -96,10 +122,4 @@ resource "azurerm_container_app" "carrier_api" {
       }
     }
   }
-
-  lifecycle {
-    ignore_changes = [template[0].container[0].image]
-  }
-
-  depends_on = [azurerm_role_assignment.carrier_api_acr_pull]
 }

@@ -27,7 +27,9 @@ The data is read once when the app starts, so restart it after regenerating the 
 
 `infra/carrier_api.tf` runs it in Azure Container Apps (HTTPS, one replica). `scripts/up.ps1` builds the
 image from `Dockerfile` right after generating the day's data, pushes it to the registry and rolls it
-out with `az containerapp update`; the daily pipeline's `fetch_carrier_api` then calls it. Docker is
+out with `terraform apply -var carrier_api_image=<image>`; the daily pipeline's `fetch_carrier_api`
+then calls it. Any other `terraform apply` puts the placeholder image back, so run `up.ps1` (or that
+apply) again afterwards. Docker is
 needed only for that build (a few minutes); without it, the session runs with the API off.
 
 ```powershell
