@@ -27,6 +27,26 @@ resource "azurerm_key_vault_secret" "eventhub_connection_string" {
   depends_on   = [azurerm_role_assignment.deployer_kv_secrets_officer]
 }
 
+# Send-only access for the GPS producer (data_generators/produce_gps.py, the trucks' side), scoped to
+# the gps-events hub alone: it can publish pings there and nothing else - not read, not manage, not
+# touch another hub. Kept in Key Vault only; Databricks never needs it.
+resource "azurerm_eventhub_authorization_rule" "gps_producer" {
+  name                = "gps-producer"
+  namespace_name      = azurerm_eventhub_namespace.evhns.name
+  eventhub_name       = azurerm_eventhub.gps_events.name
+  resource_group_name = azurerm_resource_group.rg.name
+  listen              = false
+  send                = true
+  manage              = false
+}
+
+resource "azurerm_key_vault_secret" "eventhub_producer_connection_string" {
+  name         = "eventhub-producer-connection-string"
+  value        = azurerm_eventhub_authorization_rule.gps_producer.primary_connection_string
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [azurerm_role_assignment.deployer_kv_secrets_officer]
+}
+
 resource "databricks_secret_scope" "scm_platform" {
   name = "scm-platform"
 }

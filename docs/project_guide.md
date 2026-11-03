@@ -739,7 +739,8 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | Secret | How it is handled |
 |---|---|
 | Storage access | No account key anywhere. A Databricks access connector (managed identity) has a storage role, and the Unity Catalog external locations use it |
-| Event Hubs connection string | Key Vault + Databricks secret scope, injected as `{{secrets/scm-platform/eventhub-connection-string}}` |
+| Event Hubs connection string | Key Vault + Databricks secret scope, injected as `{{secrets/scm-platform/eventhub-connection-string}}`. Listen-only rule (`databricks-streams`): the streams can read but not send |
+| GPS producer connection string | Send-only rule `gps-producer` on the `gps-events` hub alone, kept in Key Vault only. `scripts/send_gps.ps1` loads it into the producer's process, never on screen |
 | CD OAuth secret | Piped from Terraform straight into a GitHub secret. It is never printed, stored in a variable or written to a file |
 | Debezium SQL password | A user environment variable only, referenced as `${env:...}` |
 
@@ -918,8 +919,11 @@ build ──→ dev ───────────────────→
    fresh data and the dev deploy.
 2. Run CD from GitHub Actions: dev (deploy and test run) → qa (deploy and prod plan) → approve prod.
 3. Or run the pipeline directly: `databricks bundle run -t dev scm_daily_pipeline`.
-4. Open the dashboard, check Gold and capture evidence.
-5. Run `.\scripts\down.ps1` to stop billing.
+4. Live GPS: `.\scripts\send_gps.ps1` (pings into Event Hubs), then
+   `databricks bundle run -t dev scm_streaming` (drains them into Bronze), then the daily pipeline again
+   so `fact_shipment` gets each truck's last ping.
+5. Open the dashboard, check Gold and capture evidence.
+6. Run `.\scripts\down.ps1` to stop billing.
 
 ### 10.2 One night of data
 

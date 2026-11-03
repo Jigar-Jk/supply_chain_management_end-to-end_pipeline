@@ -159,6 +159,22 @@ class TestGrantsAsCode(unittest.TestCase):
         body = dict(blocks(outputs, r'output "(\w+)" \{'))["pipeline_client_secret"]
         self.assertRegex(body, r"sensitive\s*=\s*true")
 
+    def test_event_hubs_rules_are_least_privilege(self):
+        """The trucks may only send, Databricks may only listen; neither may manage."""
+        text = re.sub(r"#.*", "", (GOVERNANCE_TF.parent / "secrets.tf").read_text(encoding="utf-8"))
+        rules = dict(blocks(text, r'resource "azurerm_eventhub(?:_namespace)?_authorization_rule" "(\w+)" \{'))
+        self.assertEqual(set(rules), {"databricks_streams", "gps_producer"})
+        flags = {name: dict(re.findall(r"(listen|send|manage)\s*=\s*(true|false)", body))
+                 for name, body in rules.items()}
+        self.assertEqual(flags["databricks_streams"], {"listen": "true", "send": "false", "manage": "false"})
+        self.assertEqual(flags["gps_producer"], {"listen": "false", "send": "true", "manage": "false"})
+        self.assertIn("azurerm_eventhub.gps_events.name", rules["gps_producer"])   # one hub, not the namespace
+
+    def test_producer_key_is_not_given_to_databricks(self):
+        text = re.sub(r"#.*", "", (GOVERNANCE_TF.parent / "secrets.tf").read_text(encoding="utf-8"))
+        for _, body in blocks(text, r'resource "databricks_secret" "(\w+)" \{'):
+            self.assertNotIn("gps_producer", body)
+
     def test_analyst_can_only_enter_the_catalog(self):
         self.assertEqual(grants_of("catalog")["analyst"], {"USE_CATALOG"})
 
