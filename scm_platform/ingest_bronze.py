@@ -221,6 +221,23 @@ DATASET_SCHEMAS = {
     "inventory": get_inventory_schema,
 }
 
+# Landing file format per feed; everything not listed is NDJSON. The WMS stock file is CSV, the way a
+# WMS exports it (data_generators/generate_inventory.py writes the contract's columns in its order).
+FEED_FORMATS = {"inventory": "csv"}
+
+# How a CSV is read: a header row; comma; double quotes around values that hold a comma or a quote
+# (a quote inside is doubled); an empty cell is NULL; UTF-8. Values that do not fit the schema's
+# type, and columns the contract does not know, go to _rescued_data like for JSON.
+CSV_OPTIONS = {
+    "header": "true",
+    "sep": ",",
+    "quote": '"',
+    "escape": '"',
+    "nullValue": "",
+    "encoding": "UTF-8",
+    "pathGlobFilter": "*.csv",       # only the feed's CSV files, never a stray file in the folder
+}
+
 
 # ---------------------------------------------------------------------------
 # Ingestion Configuration
@@ -235,6 +252,7 @@ class IngestionConfig:
     target_table: str
     catalog: str = "scm_platform_dev"
     schema: str = "bronze"
+    file_format: str = "json"
 
     @property
     def full_target_table_name(self) -> str:
@@ -270,6 +288,7 @@ def get_default_config(
         target_table=feed_name,
         catalog=catalog,
         schema="bronze",
+        file_format=FEED_FORMATS.get(feed_name, "json"),
     )
 
 
@@ -312,7 +331,7 @@ def build_autoloader_stream(
 
     Configures:
     - format: cloudFiles
-    - cloudFiles.format: json
+    - cloudFiles.format: the feed's file format (json, or csv with CSV_OPTIONS)
     - cloudFiles.schemaLocation: checkpoint_path / schema
     - cloudFiles.schemaEvolutionMode: rescue (unexpected columns / types go to the rescued column)
     - rescuedDataColumn: _rescued_data (a reader option, not a cloudFiles.* one; Databricks rejects
@@ -320,10 +339,13 @@ def build_autoloader_stream(
     """
     reader = (
         spark.readStream.format("cloudFiles")
-        .option("cloudFiles.format", "json")
+        .option("cloudFiles.format", config.file_format)
         .option("cloudFiles.schemaLocation", f"{config.checkpoint_path}/schema")
         .schema(schema)
     )
+    if config.file_format == "csv":
+        for key, value in CSV_OPTIONS.items():
+            reader = reader.option(key, value)
 
     if include_rescue_column:
         reader = (

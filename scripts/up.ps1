@@ -11,7 +11,9 @@
      terraform straight to GitHub and is never shown).
   4. Databricks CLI login reuses your az login (no browser).
   5. Creates the tables in the dev, qa and prod catalogs (scripts/apply_migrations.py).
-  6. Generates fresh data (--reference-time now) and uploads it to the landing container.
+  6. Generates fresh data (--reference-time now) and uploads it to the landing container; the WMS
+     stock CSV instead goes the way a warehouse system sends it: to the SFTP drop, from where a Data
+     Factory run (started here, not waiting for its 01:30 schedule) copies it into landing.
   7. Deploys the bundle to the target (default dev).
 
   Billing starts at step 2. End every session with scripts/down.ps1.
@@ -69,6 +71,9 @@ $alertId = $out.quarantine_alert_ids.value.$Target           # the 5 % quarantin
 if (-not $alertId) { throw "No quarantine alert for target '$Target' in the terraform outputs." }
 # Where the daily pipeline pulls shipments from the carrier API; "disabled": from the uploaded file
 $carrierApi = if ($out.carrier_api_url) { $out.carrier_api_url.value } else { "disabled" }
+# The WMS SFTP drop and the Data Factory that copies from it (infra/wms_sftp.tf, infra/adf.tf)
+$wmsSftp = if ($out.wms_sftp) { $out.wms_sftp.value } else { $null }
+$adf = if ($out.data_factory_name) { $out.data_factory_name.value } else { $null }
 Write-Host "    workspace $hostUrl | warehouse $warehouse | storage $storage | alert $alertId"
 
 # ------------------------------------------------------------------ 3b. values for CD (GitHub)
@@ -144,16 +149,45 @@ if (-not $SkipData) {
     $feeds = "routes", "weather", "shipments", "warehouses", "products", "customers", "carriers", "orders", "inventory"
     # With the carrier API on, the pipeline fetches shipments itself; uploading the file too would land them twice
     if ($carrierApi -ne "disabled") { $feeds = $feeds | Where-Object { $_ -ne "shipments" } }
+    # The WMS file reaches landing through the SFTP drop and Data Factory (below), not from here
+    if ($wmsSftp) { $feeds = $feeds | Where-Object { $_ -ne "inventory" } }
     foreach ($feed in $feeds) {
+        $pattern = if ($feed -eq "inventory") { "*.csv" } else { "*.jsonl" }      # the WMS stock file is CSV
         for ($try = 1; ; $try++) {
             az storage blob upload-batch --account-name $storage --destination landing --destination-path $feed `
-                --source (Join-Path $repo "data\$feed") --pattern "*.jsonl" --auth-mode login --overwrite -o none 2>$null
+                --source (Join-Path $repo "data\$feed") --pattern $pattern --auth-mode login --overwrite -o none 2>$null
             if ($LASTEXITCODE -eq 0) { Write-Host "    uploaded $feed"; break }
             # A new role assignment can take a few minutes to become active
             if ($try -ge 10) { throw "Upload of $feed still failing after 10 tries." }
             Write-Host "    $feed not allowed yet (storage permission activating) - retry $try/10 in 30 s"
             Start-Sleep -Seconds 30
         }
+    }
+
+    if ($wmsSftp) {
+        Step "WMS drops its stock file on the SFTP drop"
+        # The password goes from Key Vault into this process's environment only: never on screen or in a file
+        $env:WMS_SFTP_PASSWORD = az keyvault secret show --vault-name $out.key_vault_name.value --name $($wmsSftp.password_secret) --query value -o tsv
+        try {
+            Check "reading the wms SFTP password from Key Vault"
+            python (Join-Path $repo "scripts\wms_sftp_upload.py") --host $wmsSftp.host --username $wmsSftp.username `
+                --folder $wmsSftp.folder --source-dir (Join-Path $repo "data\inventory")
+            Check "SFTP upload"
+        } finally { Remove-Item Env:WMS_SFTP_PASSWORD -ErrorAction SilentlyContinue }
+
+        Step "Data Factory copies it into landing (copy_wms_inventory, started now instead of at 01:30)"
+        az extension show --name datafactory -o none 2>$null
+        if ($LASTEXITCODE -ne 0) { az extension add --name datafactory --only-show-errors; Check "az extension add datafactory" }
+        $rg = $out.resource_group.value
+        $runId = az datafactory pipeline create-run --factory-name $adf --resource-group $rg --name copy_wms_inventory --query runId -o tsv
+        Check "starting the Data Factory pipeline"
+        for ($i = 1; $i -le 60; $i++) {
+            $status = az datafactory pipeline-run show --factory-name $adf --resource-group $rg --run-id $runId --query status -o tsv
+            if ($status -in "Succeeded", "Failed", "Cancelled") { break }
+            Start-Sleep -Seconds 15
+        }
+        if ($status -ne "Succeeded") { throw "Data Factory run $runId ended '$status'. See the factory's Monitor page in the portal." }
+        Write-Host "    copied: landing/inventory/ has the CSV, the drop's inbox/ is archived"
     }
 }
 

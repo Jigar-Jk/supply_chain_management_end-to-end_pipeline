@@ -1,10 +1,12 @@
 """
-generate_inventory.py – Generate the WMS nightly stock reconciliation feed (NDJSON).
+generate_inventory.py – Generate the WMS nightly stock reconciliation feed (CSV, as a WMS exports it).
 
-One file per night, data/inventory/inventory_<YYYY-MM-DD>.jsonl, one row per
-warehouse x product x night (the silver.fact_inventory_snapshot grain):
-    warehouse_id, product_id, snapshot_date, quantity_on_hand, quantity_reserved,
-    safety_stock, reorder_point, recorded_at
+One file per night, data/inventory/inventory_<YYYY-MM-DD>.csv, one row per
+warehouse x product x night (the silver.fact_inventory_snapshot grain). Header row, comma
+delimiter, double quotes only where a value needs them, UTF-8, an empty cell for a missing value:
+    warehouse_id,product_id,snapshot_date,quantity_on_hand,quantity_reserved,safety_stock,reorder_point,recorded_at
+The column order is the Bronze contract's (ingest_bronze.get_inventory_schema). read_inventory_csv
+reads a file back into typed rows for the local tools (preview pipeline, SQL Server loader, tests).
 
 Each warehouse stocks the assortment from generate_orders.warehouse_assortment (the same
 products its orders are filled from; use the same --skus-per-warehouse and --seed for both).
@@ -25,6 +27,7 @@ Usage:
 
 import argparse
 import copy
+import csv
 import json
 import math
 import random
@@ -76,6 +79,11 @@ DEMAND_MULTIPLIERS = [0.25, 0.5, 0.75, 1.0, 1.0, 1.25, 1.5, 1.75]
 # collide on one key, and Silver would treat all but the newest as superseded versions.
 UNKNOWN_WAREHOUSE_PREFIX = "WH-UNKNOWN-"
 UNKNOWN_PRODUCT_PREFIX = "SKU-UNKNOWN-"
+
+# CSV layout: the Bronze contract's column order; these columns hold whole numbers
+INVENTORY_COLUMNS = ["warehouse_id", "product_id", "snapshot_date", "quantity_on_hand", "quantity_reserved",
+                     "safety_stock", "reorder_point", "recorded_at"]
+INTEGER_COLUMNS = {"quantity_on_hand", "quantity_reserved", "safety_stock", "reorder_point"}
 
 FAILURE_MODES = [
     "null_warehouse_id",
@@ -192,6 +200,24 @@ def generate_inventory_rows(
                     yield file_night, row
 
 
+def read_inventory_csv(path: Path) -> Iterator[dict]:
+    """Rows of one nightly CSV, typed like the JSON feed was: empty cell -> None, counts -> int."""
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            typed = {}
+            for column, value in row.items():
+                if value == "":
+                    typed[column] = None
+                elif column in INTEGER_COLUMNS:
+                    try:
+                        typed[column] = int(value)
+                    except ValueError:
+                        raise ValueError(f"{path.name}: {column}={value!r} is not a whole number") from None
+                else:
+                    typed[column] = value
+            yield typed
+
+
 def snapshot_nights(last_night: date, count: int) -> list[date]:
     """`count` consecutive nights ending at last_night, oldest first."""
     return [last_night - timedelta(days=i) for i in reversed(range(count))]
@@ -210,7 +236,7 @@ def run(
     last_night: date = DEFAULT_LAST_SNAPSHOT_DATE,
     mean_daily_units: float | None = None,
 ) -> dict[str, int]:
-    """Write one NDJSON file per night plus the injection manifest. Returns {night: rows}.
+    """Write one CSV file per night plus the injection manifest. Returns {night: rows}.
 
     mean_daily_units defaults to the demand implied by the orders feed already generated in
     data_dir (data/_manifests/orders.json), else by the dev order volume.
@@ -232,14 +258,19 @@ def run(
 
     out_dir = data_dir / "inventory"
     out_dir.mkdir(parents=True, exist_ok=True)
-    handles = {n.isoformat(): open(out_dir / f"inventory_{n.isoformat()}.jsonl", "w", encoding="utf-8")
+    for old in out_dir.glob("inventory_*.jsonl"):        # earlier NDJSON exports of this generator
+        old.unlink()
+    handles = {n.isoformat(): open(out_dir / f"inventory_{n.isoformat()}.csv", "w", newline="", encoding="utf-8")
                for n in night_list}
+    writers = {n: csv.DictWriter(h, fieldnames=INVENTORY_COLUMNS, lineterminator="\n") for n, h in handles.items()}
+    for w in writers.values():
+        w.writeheader()
     written = {n: 0 for n in handles}
     manifest: list = []
     try:
         for night, row in generate_inventory_rows(keys, night_list, skus_per_warehouse, seed, bad_rate, manifest,
                                                   mean_daily_units=mean_daily_units):
-            handles[night].write(json.dumps(row, ensure_ascii=False) + "\n")
+            writers[night].writerow(row)                     # None -> empty cell
             written[night] += 1
     finally:
         for h in handles.values():
@@ -258,14 +289,14 @@ def run(
     }, indent=2), encoding="utf-8")
 
     for night, n in written.items():
-        print(f"  {night}: {n} rows -> {out_dir / f'inventory_{night}.jsonl'}")
+        print(f"  {night}: {n} rows -> {out_dir / f'inventory_{night}.csv'}")
     print(f"{len(manifest)} corrupted rows; manifest -> {manifest_file}")
     print("=" * 60)
     return written
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate the WMS nightly stock reconciliation NDJSON feed.")
+    parser = argparse.ArgumentParser(description="Generate the WMS nightly stock reconciliation CSV feed.")
     parser.add_argument("--scale", choices=sorted(SCALE_PRESETS), default="dev")
     parser.add_argument("--nights", type=int, default=None, help="Number of consecutive nights")
     parser.add_argument("--skus-per-warehouse", type=int, default=None, help="Assortment size per warehouse")

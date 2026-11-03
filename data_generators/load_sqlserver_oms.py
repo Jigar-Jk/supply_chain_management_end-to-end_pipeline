@@ -23,6 +23,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from data_generators.generate_inventory import read_inventory_csv
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 BATCH_SIZE = 5000
@@ -94,7 +96,7 @@ def order_rows(path: Path):
 
 def inventory_rows(path: Path):
     rows, seen, skipped = [], set(), Counter()
-    for r in _read_jsonl(path):
+    for r in read_inventory_csv(path):
         key = (r.get("warehouse_id"), r.get("product_id"))
         if not key[0] or not key[1]:
             skipped["null_key"] += 1
@@ -130,9 +132,9 @@ def main() -> None:
 
     try:
         orders, order_skips = order_rows(args.data_dir / "orders" / "orders.jsonl")
-        snapshots = sorted((args.data_dir / "inventory").glob("inventory_*.jsonl"))
+        snapshots = sorted((args.data_dir / "inventory").glob("inventory_*.csv"))
         if not snapshots:
-            raise FileNotFoundError("No data/inventory/inventory_*.jsonl. Run generate_inventory first.")
+            raise FileNotFoundError("No data/inventory/inventory_*.csv. Run generate_inventory first.")
         inventory, inventory_skips = inventory_rows(snapshots[-1])
 
         conn = connect(args.server, args.database)

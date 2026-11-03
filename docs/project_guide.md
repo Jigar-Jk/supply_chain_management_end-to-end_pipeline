@@ -127,7 +127,7 @@ Every catalog has the same five schemas:
 | REST API | Routing service | OpenRouteService, real API, cached (`seed_api.py`, `normalize_api_data.py`). One real route; the other lanes are synthetic | `bronze.routes` |
 | REST API | Weather service | Open-Meteo, real API, hourly forecast, cached | `bronze.weather` |
 | REST API | Carrier tracking API | Mock carrier API (`services/carrier_api`) serving `generate_shipments.py` data, pulled by `scm-ingest-api` (see 2.6); uploaded as a file while the API step is off | `bronze.shipments` |
-| Batch file | WMS nightly stock file | `generate_inventory.py`, one NDJSON file per night | `bronze.inventory` |
+| Batch file | WMS nightly stock file | `generate_inventory.py`, one CSV file per night (header, comma, quoted where needed), as a WMS exports it | `bronze.inventory` |
 | Batch file | ERP / WMS / OMS master data | `generate_master_data.py` | `bronze.warehouses`, `products`, `customers`, `carriers` |
 | Batch file | OMS order file feed | `generate_orders.py` | `bronze.orders` |
 | CDC | Order management database | SQL Server `scm_oms` + `simulate_oms_changes.py`, Debezium → Kafka | `bronze.orders_cdc`, `inventory_cdc`, `cdc_dlq` |
@@ -147,10 +147,37 @@ All data lives in one ADLS Gen2 storage account. Terraform creates its four cont
 Streaming checkpoints (GPS and CDC) live in a Unity Catalog volume:
 `/Volumes/<catalog>/ops/checkpoints`.
 
+**How the WMS file reaches landing.** A warehouse system does not get access to the data lake. It
+drops its nightly CSV on an SFTP server, and Azure Data Factory copies it in (`infra/wms_sftp.tf`,
+`infra/adf.tf`):
+
+```
+WMS ──SFTP (user wms: create/write/list only)──→ SFTP drop  wms-drop/inbox/inventory_<night>.csv
+                                                      │  01:30 UTC  ADF copy_wms_inventory
+                                                      │   1. inbox/*.csv → landing/inventory/  (byte for byte)
+                                                      │   2. same files → archive/, deleted from inbox/
+                                                      ▼
+                       landing/inventory/ → 02:30 SLA check → 03:00 Auto Loader → bronze.inventory
+```
+
+- **Who plays the WMS.** `scripts/up.ps1` uploads the generated CSV with `scripts/wms_sftp_upload.py`
+  (paramiko, as the `wms` user, password from Key Vault into an environment variable, never an
+  argument), then starts `copy_wms_inventory` and waits for it, so a session does not wait for 01:30.
+- **Why ADF here.** A plain file transfer on a schedule, with a built-in SFTP connector and retries;
+  if the WMS were on-premises, a self-hosted integration runtime would reach it. The carrier API
+  has custom logic (cursor, `Retry-After`, watermark), so it is Python instead (2.6).
+- **Secrets.** Azure generates each SFTP user's password; both go to Key Vault. ADF reads its
+  password from Key Vault and writes the lake with its managed identity, on the landing container only.
+- **Both steps take the same files:** `inbox/*.csv` modified before the run started, so a file that
+  arrives mid-run is neither archived without landing nor lost.
+
 ### 2.3 File ingestion with Auto Loader
 
 - **Only new files.** A checkpoint remembers which files were read, so a re-run never loads a file twice.
 - **Explicit schema.** The schema is given in `DATASET_SCHEMAS` in `ingest_bronze.py`; it is not inferred.
+- **Format per feed.** Every feed is NDJSON except the WMS stock file, which is CSV (`FEED_FORMATS`).
+  CSV is read with a header row, comma, double quotes around values holding a comma or a quote, an
+  empty cell as NULL and UTF-8 (`CSV_OPTIONS`); only `*.csv` files in the folder are picked up.
 - **Rescue mode.** A field that does not fit the schema (a new column or a wrong type) goes to
   `_rescued_data` instead of failing the row. Silver's schema-drift rule then catches it.
 - **One checkpoint per environment.** The checkpoint path contains the catalog name. Dev, qa and prod
@@ -750,9 +777,11 @@ CASE WHEN is_member('pii_readers') THEN customer_name ELSE '***' END AS customer
 | `keyvault.tf`, `secrets.tf` | Key Vault, Event Hubs auth rule and connection string, the generated carrier API key, Databricks secret scope and secrets |
 | `governance.tf` | Service principals, grants, warehouse permission, secret ACL, pipeline OAuth secret, `pii_readers` |
 | `alerts.tf` | Quarantine-rate query and alert per catalog, with run permissions for the pipeline |
+| `wms_sftp.tf` | The WMS SFTP drop: a storage account with SFTP on, container `wms-drop`, local users `wms` and `adf`, their passwords in Key Vault |
+| `adf.tf`, `adf/*.json` | Data Factory: Key Vault, SFTP and data lake connections, datasets, pipeline `copy_wms_inventory`, daily 01:30 UTC trigger, roles (Key Vault secrets, landing only) |
 | `outputs.tf` | Workspace URL, warehouse id, storage name, Event Hubs namespace, alert ids, pipeline client id and the (sensitive) secret |
 
-One `terraform apply` creates 71 resources. The settings for the student subscription are in
+One `terraform apply` creates 91 resources. The settings for the student subscription are in
 `infra/envs/student.tfvars`.
 
 ### 8.2 Session scripts
@@ -770,7 +799,7 @@ spent only while working.
 | 3b. GitHub values | Sets the CD secrets and variables with `gh`; the OAuth secret is piped from Terraform to GitHub |
 | 4. Databricks login | Uses the az login token; an empty CLI config avoids stale profiles |
 | 5. Tables | `apply_migrations.py` on dev, qa and prod |
-| 6. Data | Generates fresh data dated today and uploads 9 feeds to `landing`, retrying while a new storage role activates |
+| 6. Data | Generates fresh data dated today and uploads 8 feeds to `landing`, retrying while a new storage role activates. Plays the WMS for the ninth: puts the stock CSV on the SFTP drop (`scripts/wms_sftp_upload.py`, password from Key Vault), starts the Data Factory copy at once instead of waiting for 01:30, and waits for it to succeed |
 | 7. Deploy | `databricks bundle deploy`: builds the wheel and creates 4 jobs and the dashboard |
 
 ```powershell
@@ -868,6 +897,7 @@ build ──→ dev ───────────────────→
 
 | Job | Schedule (UTC) | Tasks |
 |---|---|---|
+| ADF `copy_wms_inventory` | 01:30 daily | WMS CSV from the SFTP drop to landing/inventory/, then archive (Data Factory, not a Databricks job) |
 | `scm_wms_sla_check` | 02:30 daily | check_wms_snapshot (carries stock forward on an SLA miss) |
 | `scm_daily_pipeline` | 03:00 daily | carrier_api_enabled → fetch_carrier_api (only with a URL) → ingest_bronze_files → transform_silver → silver_quality_tests → refresh_gold; quarantine_rate_alert after transform_silver |
 | `scm_streaming` | every 30 minutes | stream_gps and stream_cdc in parallel on one cluster |

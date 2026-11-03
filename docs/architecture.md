@@ -6,7 +6,7 @@ per-feed **quality gate** sends clean rows to the **Silver** galaxy schema and f
 a Genie space. Unity Catalog governs everything; Terraform, Liquibase, Databricks Asset Bundles
 and GitHub Actions deliver it as code.
 
-The presentation version of the main diagram is [`architecture.drawio`](architecture.drawio)
+The presentation version of the main diagram is [`full_architecture.drawio`](full_architecture.drawio)
 (open in draw.io / diagrams.net or the VS Code *Draw.io Integration* extension; export PNG for slides).
 
 ## 1. End-to-end flow
@@ -14,14 +14,18 @@ The presentation version of the main diagram is [`architecture.drawio`](architec
 ```mermaid
 flowchart LR
   subgraph SRC["Sources"]
-    API["REST API<br/>OpenRouteService · Open-Meteo<br/>+ carrier shipments"]
-    WMS["Batch file<br/>WMS nightly stock recon<br/>NDJSON, due 02:00 UTC"]
+    CAR["Carrier tracking API<br/>(mock, X-API-Key, cursor pages)"]
+    API["REST APIs<br/>OpenRouteService · Open-Meteo<br/>(responses cached)"]
+    WMS["Batch file<br/>WMS nightly stock<br/>CSV, due 02:00 UTC"]
     OMS["CDC source<br/>SQL Server OMS<br/>orders + inventory"]
     GPS["Streaming<br/>GPS / RFID trucks + pallets"]
     MD["Master data<br/>warehouses · products<br/>customers · carriers"]
   end
 
   subgraph LAND["Landing / transport"]
+    ING["scm-ingest-api<br/>retry · backoff · watermark<br/>(switch: carrier_api_url)"]
+    SFTP["SFTP drop<br/>wms-drop/inbox"]
+    ADF["Azure Data Factory<br/>copy_wms_inventory · 01:30 UTC<br/>then archive/"]
     ADLS["ADLS Gen2<br/>/landing/&lt;feed&gt;/"]
     DBZ["CDC change tables<br/>→ Debezium<br/>(LSN bookmark)"]
     EH["Azure Event Hubs<br/>Kafka protocol<br/>(substitutes Kinesis)"]
@@ -55,8 +59,9 @@ flowchart LR
     GENIE["Genie space<br/>natural language → SQL"]
   end
 
+  CAR --> ING -- "pages" --> ADLS
   API --> ADLS
-  WMS --> ADLS
+  WMS -- "SFTP" --> SFTP --> ADF -- "copy" --> ADLS
   MD --> ADLS
   ADLS -- "Auto Loader" --> BF
   ADLS -- "Auto Loader" --> BI
@@ -86,8 +91,8 @@ flowchart LR
   classDef slv fill:#e6e6e6,stroke:#666,color:#000
   classDef gld fill:#ffe599,stroke:#bf9000,color:#000
   classDef con fill:#d5e8d4,stroke:#82b366,color:#000
-  class API,WMS,OMS,GPS,MD src
-  class ADLS,DBZ,EH land
+  class CAR,API,WMS,OMS,GPS,MD src
+  class ING,SFTP,ADF,ADLS,DBZ,EH land
   class BF,BI,BC,BG,DLQ brz
   class GATE gate
   class Q,RP quar
@@ -100,20 +105,20 @@ flowchart LR
 
 | Concern | How |
 |---|---|
-| Governance | Unity Catalog: one catalog per environment, schemas per layer (`bronze`, `silver`, `gold`, `quarantine`, `ops`), group grants, row filter on the mart, column mask on `customer_id`, tags, automatic column lineage |
-| Observability | `ops.pipeline_run_log`, `ops.sla_config`, four data-quality tiles: volume vs quarantined, quarantine by rule, reprocessing success rate, pipeline SLA status |
-| Infrastructure | Terraform: resource group, ADLS Gen2, Event Hubs, Key Vault, Databricks workspace, access connector |
+| Governance | Unity Catalog: one catalog per environment, schemas per layer (`bronze`, `silver`, `gold`, `quarantine`, `ops`); grants as code to service principals (the pipeline writes, the analyst reads Gold only); PII masked in Gold views for everyone outside `pii_readers`; storage reached through the access connector, no keys; audit queries on system tables; automatic lineage |
+| Observability | `ops.pipeline_run_log`, `ops.sla_config`, `ops.schema_changelog`, `ops.api_watermark`; four data-quality tiles (volume vs quarantined, quarantine by rule, reprocessing success rate, pipeline SLA status); quarantine-rate alert |
+| Infrastructure | Terraform: resource group, ADLS Gen2, Event Hubs, Key Vault, Databricks workspace, access connector, Data Factory, WMS SFTP drop |
 | Schema | Liquibase: versioned migrations for every table and view; Gold views redeploy on change |
-| Jobs | Databricks Asset Bundles: ingestion, quality gate, Silver, Gold refresh, reprocessing, SLA sentinel |
+| Jobs | Databricks Asset Bundles: carrier API fetch (switched), ingestion, quality gate, Silver, Gold refresh, reprocessing, SLA sentinel; Data Factory for the WMS file copy |
 | Delivery | GitHub Actions: lint → tests → bundle validate → deploy dev → QA → prod (manual approval) |
-| Secrets | Azure Key Vault-backed secret scope; local runs use environment variables, never files |
+| Secrets | Databricks secret scope (Event Hubs, carrier API key) with copies in Key Vault; SFTP passwords in Key Vault, read by Data Factory; local runs use environment variables, never files |
 
 ## 2. The four ingestion patterns
 
 | Pattern | Source (as built) | Transport → Bronze | Failure handling demonstrated |
 |---|---|---|---|
-| REST API | OpenRouteService routes, Open-Meteo weather; carrier shipments synthesised on the real shape | landing files → Auto Loader | retries with backoff; bad rows → quarantine |
-| Batch file | WMS nightly stock reconciliation, NDJSON, one file per night | landing files → Auto Loader | late / missing file → SLA miss, last good snapshot carried forward (`is_stale`) |
+| REST API | Mock carrier tracking API (`services/carrier_api`) serving the generated shipments; OpenRouteService routes and Open-Meteo weather (cached) | `scm-ingest-api` pages the carrier API into landing → Auto Loader (switch `carrier_api_url`; until then the file is uploaded) | 429 waits for `Retry-After`, 5xx retried with backoff, 4xx fail at once; watermark moves only after the last page landed; bad rows → quarantine |
+| Batch file | WMS nightly stock reconciliation, CSV, one file per night | WMS → SFTP drop → Data Factory (01:30 UTC, then archive) → landing → Auto Loader | late / missing file → SLA miss, last good snapshot carried forward (`is_stale`) |
 | CDC | SQL Server OMS (`scm_oms`), CDC on `order_lines` and `inventory` | change tables → Debezium → Event Hubs → Structured Streaming | Debezium outage (resumes from LSN, nothing lost); out-of-order replay (highest LSN wins); reconciliation vs source = identical |
 | Streaming | GPS/RFID producer, ~2,000 events/s | Event Hubs → Structured Streaming with checkpoints | unparseable → dead-letter table; duplicates removed on `event_id`; restart resumes at committed offsets |
 
@@ -171,7 +176,7 @@ flowchart LR
   APP --> D3["PROD<br/>migrations · deploy<br/>runs as scm-pipeline"]
 
   subgraph OWN["Who owns what"]
-    TF["Terraform<br/>Azure resources · UC catalogs/schemas · grants · service principals"]
+    TF["Terraform<br/>Azure resources · UC catalogs/schemas · grants · service principals<br/>Data Factory · SFTP drop"]
     LB["Liquibase changelog<br/>tables · views<br/>(applied by scripts/apply_migrations.py)"]
     DAB["Asset Bundles<br/>jobs · schedules"]
   end
@@ -186,5 +191,5 @@ stores the session's values in GitHub; `scripts/github_envs.ps1` sets up the env
 | Charter / guide | As built | Why |
 |---|---|---|
 | AWS Kinesis | Azure Event Hubs (Kafka protocol) | Stack 2 is Azure; local development uses Kafka, a configuration-only switch |
-| FedEx / DHL / Maersk APIs | OpenRouteService + Open-Meteo | Commercial carrier APIs need accounts; real API shape, synthetic carrier fields |
+| FedEx / DHL / Maersk APIs | Mock carrier API + OpenRouteService + Open-Meteo | Commercial carrier APIs need accounts; the mock behaves like one (key, cursor pages, 429/500), so a real carrier changes only URL and key |
 | DLT expectations | PySpark rule lists per feed | Same rules for the gate, the reprocessing job and the tests; testable locally |

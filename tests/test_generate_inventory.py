@@ -16,14 +16,16 @@ from types import GeneratorType
 from data_generators import generate_master_data
 from data_generators.generate_inventory import (
     FAILURE_MODES,
+    INVENTORY_COLUMNS,
     UNKNOWN_PRODUCT_PREFIX,
     UNKNOWN_WAREHOUSE_PREFIX,
     generate_inventory_rows,
+    read_inventory_csv,
     run,
     snapshot_nights,
 )
 from data_generators.generate_master_data import build_master_data
-from data_generators.generate_orders import usable_master_keys
+from data_generators.generate_orders import load_master_data, usable_master_keys
 
 MASTER_COUNTS = {"warehouses": 50, "carriers": 20, "products": 400, "customers": 300, "routes": 250}
 NIGHTS = snapshot_nights(date(2026, 10, 12), 3)
@@ -120,10 +122,43 @@ class TestInventoryGenerator(unittest.TestCase):
             written = run(data_dir=data_dir, nights=2, skus_per_warehouse=10, last_night=date(2026, 10, 12))
             self.assertEqual(set(written), {"2026-10-11", "2026-10-12"})
             for night, n in written.items():
-                lines = (data_dir / "inventory" / f"inventory_{night}.jsonl").read_text(encoding="utf-8").splitlines()
-                self.assertEqual(len(lines), n)
+                lines = (data_dir / "inventory" / f"inventory_{night}.csv").read_text(encoding="utf-8").splitlines()
+                self.assertEqual(len(lines), n + 1)                       # + header
             manifest = json.loads((data_dir / "_manifests" / "inventory.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["rows_written"], written)
+
+    def test_csv_has_the_contract_header_and_reads_back_to_the_generated_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            generate_master_data.run(data_dir=data_dir, counts=MASTER_COUNTS, seed=42, bad_rate=0.02)
+            run(data_dir=data_dir, nights=2, skus_per_warehouse=10, last_night=date(2026, 10, 12), bad_rate=0.2)
+            path = data_dir / "inventory" / "inventory_2026-10-12.csv"
+            self.assertEqual(path.read_text(encoding="utf-8").splitlines()[0], ",".join(INVENTORY_COLUMNS))
+            back = list(read_inventory_csv(path))
+            expected = [r for night, r in generate_inventory_rows(
+                usable_master_keys(*load_master_data(data_dir)), snapshot_nights(date(2026, 10, 12), 2), 10,
+                bad_rate=0.2, mean_daily_units=json.loads((data_dir / "_manifests" / "inventory.json")
+                                                          .read_text(encoding="utf-8"))["mean_daily_units"])
+                        if night == "2026-10-12"]
+            self.assertEqual(back, expected)              # nulls, negatives, unknown codes all survive the CSV
+            self.assertTrue(any(r["warehouse_id"] is None for r in back), "an empty cell must read back as None")
+
+    def test_old_ndjson_exports_are_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            generate_master_data.run(data_dir=data_dir, counts=MASTER_COUNTS, seed=42, bad_rate=0.02)
+            (data_dir / "inventory").mkdir()
+            (data_dir / "inventory" / "inventory_2026-10-01.jsonl").write_text("{}\n", encoding="utf-8")
+            run(data_dir=data_dir, nights=1, skus_per_warehouse=5, last_night=date(2026, 10, 12))
+            self.assertEqual(sorted(p.name for p in (data_dir / "inventory").iterdir()), ["inventory_2026-10-12.csv"])
+
+    def test_a_non_numeric_count_names_the_file_and_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inventory_2026-10-12.csv"
+            path.write_text(",".join(INVENTORY_COLUMNS) + "\nWH-1,SKU-1,2026-10-12,lots,0,1,2,2026-10-12T01:00:00Z\n",
+                            encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "inventory_2026-10-12.csv: quantity_on_hand='lots'"):
+                list(read_inventory_csv(path))
 
 
 if __name__ == "__main__":
